@@ -1,0 +1,209 @@
+[
+  {
+    "id": "RFP-001",
+    "title": "E-commerce Modernization Development",
+    "client": "Energy Systems Co",
+    "description": "Seeking experienced development team for machine learning implementation",
+    "project_type": "Machine Learning Implementation",
+    "duration_months": 12,
+    "team_size": 4,
+    "budget_range": "$100K - $250K",
+    "start_date": "2025-11-29",
+    "requirements": [
+      {
+        "skill_name": "Microservices",
+        "min_proficiency": "Expert",
+        "is_mandatory": true,
+        "preferred_certifications": [
+          "Certified Kubernetes Administrator",
+          "AWS Certified Solutions Architect"
+        ]
+      },
+      {
+        "skill_name": "Docker",
+        "min_proficiency": "Expert",
+        "is_mandatory": true,
+        "preferred_certifications": [
+          "AWS Certified Solutions Architect",
+          "Certified Kubernetes Administrator"
+        ]
+      },
+      {
+        "skill_name": "PostgreSQL",
+        "min_proficiency": "Expert",
+        "is_mandatory": true,
+        "preferred_certifications": [
+          "Certified Kubernetes Administrator",
+          "Google Cloud Professional"
+        ]
+      },
+      {
+        "skill_name": "Angular",
+        "min_proficiency": "Intermediate",
+        "is_mandatory": true,
+        "preferred_certifications": [
+          "Certified Kubernetes Administrator"
+        ]
+      },
+      {
+        "skill_name": "DevOps",
+        "min_proficiency": "Intermediate",
+        "is_mandatory": true,
+        "preferred_certifications": [
+          "Google Cloud Professional",
+          "AWS Certified Solutions Architect"
+        ]
+      },
+      {
+        "skill_name": "Kubernetes",
+        "min_proficiency": "Intermediate",
+        "is_mandatory": true,
+        "preferred_certifications": [
+          "Google Cloud Professional",
+          "AWS Certified Solutions Architect"
+        ]
+      },
+      {
+        "skill_name": "Python",
+        "min_proficiency": "Intermediate",
+        "is_mandatory": false,
+        "preferred_certifications": [
+          "AWS Certified Solutions Architect"
+        ]
+      }
+    ],
+    "location": "Evansshire",
+    "remote_allowed": true
+  },
+  {
+    "id": "RFP-002",
+    "title": "Mobile App Development Development",
+    "client": "Education Network",
+    "description": "Seeking experienced development team for security enhancement",
+    "project_type": "Enterprise Web Application",
+    "duration_months": 21,
+    "team_size": 9,
+    "budget_range": "$1M - $2M",
+    "start_date": "2025-11-29",
+    "requirements": [
+      {
+        "skill_name": "React",
+        "min_proficiency": "Intermediate",
+        "is_mandatory": false,
+        "preferred_certifications": [
+          "Certified Kubernetes Administrator"
+        ]
+      },
+      {
+        "skill_name": "MongoDB",
+        "min_proficiency": "Expert",
+        "is_mandatory": true,
+        "preferred_certifications": [
+          "AWS Certified Solutions Architect",
+          "Certified Kubernetes Administrator"
+        ]
+      },
+      {
+        "skill_name": "Python",
+        "min_proficiency": "Intermediate",
+        "is_mandatory": true,
+        "preferred_certifications": [
+          "Google Cloud Professional",
+          "AWS Certified Solutions Architect"
+        ]
+      },
+      {
+        "skill_name": "Angular",
+        "min_proficiency": "Expert",
+        "is_mandatory": true,
+        "preferred_certifications": [
+          "Google Cloud Professional"
+        ]
+      },
+      {
+        "skill_name": "Node.js",
+        "min_proficiency": "Intermediate",
+        "is_mandatory": true,
+        "preferred_certifications": [
+          "Google Cloud Professional",
+          "Certified Kubernetes Administrator"
+        ]
+      }
+    ],
+    "location": "Patriciaview",
+    "remote_allowed": false
+  },
+  {
+    "id": "RFP-003",
+    "title": "Mobile App Development Development",
+    "client": "MedTech Industries",
+    "description": "Seeking experienced development team for enterprise web application",
+    "project_type": "Machine Learning Implementation",
+    "duration_months": 11,
+    "team_size": 10,
+    "budget_range": "$1M - $2M",
+    "start_date": "2025-11-29",
+    "requirements": [
+      {
+        "skill_name": "Java",
+        "min_proficiency": "Intermediate",
+        "is_mandatory": true,
+        "preferred_certifications": [
+          "Certified Kubernetes Administrator",
+          "AWS Certified Solutions Architect"
+        ]
+      },
+      {
+        "skill_name": "Python",
+        "min_proficiency": "Intermediate",
+        "is_mandatory": false,
+        "preferred_certifications": []
+      },
+      {
+        "skill_name": "Node.js",
+        "min_proficiency": "Expert",
+        "is_mandatory": false,
+        "preferred_certifications": []
+      },
+      {
+        "skill_name": "TypeScript",
+        "min_proficiency": "Expert",
+        "is_mandatory": false,
+        "preferred_certifications": []
+      },
+      {
+        "skill_name": "JavaScript",
+        "min_proficiency": "Intermediate",
+        "is_mandatory": true,
+        "preferred_certifications": [
+          "Certified Kubernetes Administrator"
+        ]
+      },
+      {
+        "skill_name": "Microservices",
+        "min_proficiency": "Intermediate",
+        "is_mandatory": true,
+        "preferred_certifications": [
+          "Google Cloud Professional",
+          "AWS Certified Solutions Architect"
+        ]
+      },
+      {
+        "skill_name": "Angular",
+        "min_proficiency": "Intermediate",
+        "is_mandatory": true,
+        "preferred_certifications": []
+      },
+      {
+        "skill_name": "PostgreSQL",
+        "min_proficiency": "Expert",
+        "is_mandatory": false,
+        "preferred_certifications": [
+          "Google Cloud Professional"
+        ]
+      }
+    ],
+    "location": "Pamview",
+    "remote_allowed": true
+  }
+]

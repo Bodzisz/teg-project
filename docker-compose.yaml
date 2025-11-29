@@ -11,7 +11,31 @@ services:
       - ./neo4j/plugins:/plugins
     environment:
       - NEO4J_AUTH=neo4j/password
+
+      # Plugins
+      - NEO4J_PLUGINS=["apoc"]
+
+      # Security settings for APOC procedures
+      - NEO4J_dbms_security_procedures_unrestricted=apoc.*
+      - NEO4J_dbms_security_procedures_allowlist=apoc.*
+
+      # File import/export settings
+      - NEO4J_apoc_export_file_enabled=true
+      - NEO4J_apoc_import_file_enabled=true
+      - NEO4J_apoc_import_file_use__neo4j__config=true
+
+      # Memory settings optimized for educational use
+      - NEO4J_dbms_memory_heap_initial__size=512m
+      - NEO4J_dbms_memory_heap_max__size=1G
+      - NEO4J_dbms_memory_pagecache_size=512m
+
+      # Browser configuration
+      - NEO4J_browser_remote__content__hostname__whitelist=*
+      - NEO4J_browser_post__connect__cmd=config
+
+      # Logging
+      - NEO4J_dbms_logs_query_enabled=INFO
     ports:
       - "7474:7474"
       - "7687:7687"
-    restart: always
+    restart: unless-stopped

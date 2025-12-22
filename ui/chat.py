@@ -1,25 +1,10 @@
 import streamlit as st
-import importlib.util
-import sys
-import os
+from query_knowledge_graph import CVGraphRAGSystem
 
-# Load the CVGraphRAGSystem class dynamically because the filename starts with a number
-# The file is in the root directory, so we need to go up one level from ui/
 @st.cache_resource
 def get_system():
-    module_name = "3_query_knowledge_graph"
-    # Get absolute path to the file in the parent directory
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.dirname(current_dir)
-    file_path = os.path.join(project_root, "3_query_knowledge_graph.py")
-    
-    spec = importlib.util.spec_from_file_location(module_name, file_path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module
-    spec.loader.exec_module(module)
-    
     # Initialize the system
-    system = module.CVGraphRAGSystem()
+    system = CVGraphRAGSystem()
     return system
 
 def render_chat():

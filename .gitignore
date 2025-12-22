@@ -2,3 +2,4 @@
 **/.env**
 results/**
 chroma_naive_rag_cv/**
+**/__pycache__/**

@@ -1,0 +1,33 @@
+# RFP Parser Configuration
+# =========================
+# Controls RFP parsing behavior and Neo4j integration.
+
+[parser]
+# Directory containing RFP PDF files
+rfp_dir = "data/RFP"
+
+# Whether to save parsed data to Neo4j
+save_to_neo4j = true
+
+# Logging level: DEBUG, INFO, WARNING, ERROR
+log_level = "INFO"
+
+[llm]
+# LLM model name
+model_name = "gpt-4o-mini"
+
+# Temperature for response generation
+temperature = 0
+
+# Maximum tokens for LLM response
+max_tokens = 2000
+
+[neo4j]
+# Neo4j connection details
+uri = "bolt://localhost:7687"
+username = "neo4j"
+password = "password"
+
+[output]
+# Directory for saving parsed JSON files
+output_dir = "data/parsed_rfps"

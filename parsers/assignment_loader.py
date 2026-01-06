@@ -199,7 +199,7 @@ class AssignmentLoader:
 
             for prog in assigned:
                 assignments.append({
-                    "project_id": project.id,
+                    "project_id": project.name,
                     "programmer_id": prog.id,
                     "end_date": assignment_end_date
                 })
@@ -216,7 +216,7 @@ class AssignmentLoader:
         try:
             # Ensure indexes exist for fast lookup
             index_queries = [
-                "CREATE INDEX project_title IF NOT EXISTS FOR (proj:Project) ON (proj.title)",
+                "CREATE INDEX project_name IF NOT EXISTS FOR (proj:Project) ON (proj.name)",
                 "CREATE INDEX person_name IF NOT EXISTS FOR (p:Person) ON (p.name)"
             ]
             for query in index_queries:
@@ -228,9 +228,9 @@ class AssignmentLoader:
             # Insert assignments
             for assignment in assignments:
                 query = """
-                MATCH (proj:Project {title: $project_id})
+                MATCH (proj:Project {name: $project_id})
                 MATCH (p:Person {name: $programmer_id})
-                MERGE (proj)-[:ASSIGNED_TO {end_date: $end_date}]->(p)
+                MERGE (p)-[:ASSIGNED_TO {end_date: $end_date}]->(proj)
                 """
                 self.graph.query(query, {
                     "project_id": assignment["project_id"],

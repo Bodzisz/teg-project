@@ -365,7 +365,7 @@ class DataKnowledgeGraphBuilder:
             "CREATE INDEX person_name IF NOT EXISTS FOR (p:Person) ON (p.name)",
             "CREATE INDEX skill_name IF NOT EXISTS FOR (s:Skill) ON (s.name)",
             "CREATE INDEX company_name IF NOT EXISTS FOR (c:Company) ON (c.name)",
-            "CREATE INDEX project_title IF NOT EXISTS FOR (pr:Project) ON (pr.title)",
+            "CREATE INDEX project_name IF NOT EXISTS FOR (pr:Project) ON (pr.name)",
             "CREATE INDEX certification_name IF NOT EXISTS FOR (cert:Certification) ON (cert.name)",
             "CREATE INDEX university_name IF NOT EXISTS FOR (u:University) ON (u.name)",
             "CREATE INDEX rfp_title IF NOT EXISTS FOR (r:RFP) ON (r.title)",

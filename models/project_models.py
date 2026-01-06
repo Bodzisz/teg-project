@@ -21,7 +21,7 @@ class ProjectData(BaseModel):
     start_date: date = Field(..., description="Data rozpoczęcia")
     end_date: Optional[date] = Field(None, description="Data zakończenia (opcjonalna)")
     estimated_duration_months: int = Field(..., description="Szacowany czas trwania w miesiącach")
-    budget: Optional[float] = Field(None, description="Budżet projektu")
+    budget: Optional[str] = Field(None, description="Budżet projektu")
     status: str = Field(..., description="Status projektu: completed, active, planned, on_hold")
     team_size: int = Field(..., description="Rozmiar zespołu")
     requirements: List[Requirement] = Field(..., description="Lista wymagań projektowych")

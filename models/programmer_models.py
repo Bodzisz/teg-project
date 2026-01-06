@@ -9,10 +9,10 @@ class Certification(BaseModel):
     name: str = Field(..., description="Nazwa certyfikatu")
 
 class ProgrammerData(BaseModel):
-    id: int = Field(..., description="Unikalny identyfikator programisty")
+    id: str = Field(..., description="Unikalny identyfikator programisty (name from graph)")
     name: str = Field(..., description="Imię i nazwisko")
-    email: str = Field(..., description="Adres e-mail")
-    location: str = Field(..., description="Lokalizacja")
+    email: Optional[str] = Field(None, description="Adres e-mail")
+    location: Optional[str] = Field(None, description="Lokalizacja")
     skills: List[Skill] = Field(..., description="Lista umiejętności z poziomem")
-    projects: List[str] = Field(..., description="Lista projektów, w których uczestniczył")
+    projects: List[str] = Field(default_factory=list, description="Lista projektów, w których uczestniczył")
     certifications: List[str] = Field(default_factory=list, description="Lista certyfikatów")

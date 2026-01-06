@@ -33,10 +33,10 @@ logger = logging.getLogger(__name__)
 class DataKnowledgeGraphBuilder:
     """Builds knowledge graph from PDFs and JSONs using LangChain's LLMGraphTransformer."""
 
-    def __init__(self, config_path: str = "utils/config.toml"):
+    def __init__(self, config_path: str = "utils/config.toml", clear_graph: bool = False):
         """Initialize the data knowledge graph builder."""
         self.config = self._load_config(config_path)
-        self.setup_neo4j()
+        self.setup_neo4j(clear_graph=clear_graph)
         self.setup_llm_transformer()
 
     def _load_config(self, config_path: str) -> dict:
@@ -49,16 +49,19 @@ class DataKnowledgeGraphBuilder:
 
         return config
 
-    def setup_neo4j(self):
+    def setup_neo4j(self, clear_graph: bool = False):
         """Setup Neo4j connection."""
         try:
             self.graph = Neo4jGraph()
             logger.info("✓ Connected to Neo4j successfully")
 
-            # Complete cleanup for fresh start
-            logger.info("Performing complete Neo4j cleanup...")
-            self.complete_cleanup()
-            logger.info("✓ Neo4j completely cleared")
+            if clear_graph:
+                # Complete cleanup for fresh start
+                logger.info("Performing complete Neo4j cleanup...")
+                self.complete_cleanup()
+                logger.info("✓ Neo4j completely cleared")
+            else:
+                logger.info("✓ Neo4j connection established (existing data preserved)")
 
         except Exception as e:
             logger.error(f"Failed to connect to Neo4j: {e}")
@@ -123,40 +126,47 @@ class DataKnowledgeGraphBuilder:
             api_key=os.getenv("OPENAI_API_KEY")
         )
 
-        # Define CV-specific ontology
+        # Define ontology according to PRD 4.3 Graph Schema according to PRD 4.3 Graph Schema
         self.allowed_nodes = [
-            "Person", "Company", "University", "Skill", "Technology",
-            "Project", "Certification", "Location", "JobTitle", "Industry"
+            "Person", "Skill", "Company", "Project", "Certification", "University", "RFP"
         ]
 
-        # Define relationships with directional tuples
+        # Define relationships according to PRD 4.3 Graph Schema
         self.allowed_relationships = [
-            ("Person", "WORKED_AT", "Company"),
-            ("Person", "STUDIED_AT", "University"),
             ("Person", "HAS_SKILL", "Skill"),
-            ("Person", "LOCATED_IN", "Location"),
-            ("Person", "HOLDS_POSITION", "JobTitle"),
+            ("Person", "WORKED_AT", "Company"),
             ("Person", "WORKED_ON", "Project"),
             ("Person", "EARNED", "Certification"),
-            ("JobTitle", "AT_COMPANY", "Company"),
-            ("Project", "USED_TECHNOLOGY", "Technology"),
-            ("Project", "FOR_COMPANY", "Company"),
-            ("Company", "IN_INDUSTRY", "Industry"),
-            ("Skill", "RELATED_TO", "Technology"),
-            ("Certification", "ISSUED_BY", "Company"),
-            ("University", "LOCATED_IN", "Location")
+            ("Person", "STUDIED_AT", "University"),
+            ("Person", "ASSIGNED_TO", "Project"),
+            ("Project", "REQUIRES", "Skill"),
+            ("RFP", "NEEDS", "Skill")
         ]
 
-        # Initialize transformer with strict schema
+        # Initialize transformer with strict schema and PRD-compliant properties
         self.llm_transformer = LLMGraphTransformer(
             llm=self.llm,
             allowed_nodes=self.allowed_nodes,
             allowed_relationships=self.allowed_relationships,
-            node_properties=["start_date", "end_date", "level", "years_experience"],
+            node_properties=[
+                "name", "location", "email", "phone", "years_experience",
+                "category", "subcategory", "industry", "size",
+                "title", "description", "start_date", "end_date", "budget",
+                "provider", "date_earned", "expiry_date", "ranking",
+                "requirements", "deadline", "role", "contribution", "degree",
+                "graduation_year", "gpa", "allocation_percentage", "score",
+                "minimum_level", "preferred_level", "required_count", "experience_level"
+            ],
+            relationship_properties=[
+                "proficiency", "years_experience", "role", "start_date", "end_date",
+                "contribution", "date", "score", "degree", "graduation_year", "gpa",
+                "allocation_percentage", "minimum_level", "preferred_level",
+                "required_count", "experience_level"
+            ],
             strict_mode=True
         )
 
-        logger.info("✓ LLM Graph Transformer initialized with CV schema")
+        logger.info("✓ LLM Graph Transformer initialized with PRD 4.3 Graph Schema")
 
     def extract_text_from_pdf(self, pdf_path: str) -> str:
         """Extract text content from PDF using unstructured.
@@ -288,6 +298,9 @@ class DataKnowledgeGraphBuilder:
             logger.info(f"✓ Total nodes: {total_nodes}")
             logger.info(f"✓ Total relationships: {total_relationships}")
 
+            # Fix property names to match PRD schema
+            self._fix_node_properties()
+
             # Create useful indexes for performance
             self.create_indexes()
 
@@ -295,12 +308,67 @@ class DataKnowledgeGraphBuilder:
             logger.error(f"Failed to store graph documents: {e}")
             raise
 
+    def _fix_node_properties(self):
+        """Post-process nodes to fix property names according to PRD schema."""
+        try:
+            # For Person nodes: copy 'id' to 'name' if name doesn't exist
+            fix_person_query = """
+            MATCH (p:Person)
+            WHERE p.name IS NULL AND p.id IS NOT NULL
+            SET p.name = p.id
+            """
+            self.graph.query(fix_person_query)
+            logger.info("✓ Fixed Person node properties (id → name)")
+
+            # For Skill nodes: copy 'id' to 'name' to ensure consistency
+            fix_skill_query = """
+            MATCH (s:Skill)
+            WHERE s.id IS NOT NULL
+            SET s.name = s.id
+            """
+            self.graph.query(fix_skill_query)
+            logger.info("✓ Fixed Skill node properties (id → name)")
+
+            # For Company nodes: copy 'id' to 'name' to ensure consistency
+            fix_company_query = """
+            MATCH (c:Company)
+            WHERE c.id IS NOT NULL
+            SET c.name = c.id
+            """
+            self.graph.query(fix_company_query)
+            logger.info("✓ Fixed Company node properties (id → name)")
+
+            # For Certification nodes: copy 'id' to 'name' to ensure consistency
+            fix_cert_query = """
+            MATCH (cert:Certification)
+            WHERE cert.id IS NOT NULL
+            SET cert.name = cert.id
+            """
+            self.graph.query(fix_cert_query)
+            logger.info("✓ Fixed Certification node properties (id → name)")
+
+            # For University nodes: copy 'id' to 'name' to ensure consistency
+            fix_uni_query = """
+            MATCH (u:University)
+            WHERE u.id IS NOT NULL
+            SET u.name = u.id
+            """
+            self.graph.query(fix_uni_query)
+            logger.info("✓ Fixed University node properties (id → name)")
+
+        except Exception as e:
+            logger.warning(f"Non-critical issue during property fixing: {e}")
+
     def create_indexes(self):
-        """Create indexes for better query performance."""
+        """Create indexes for better query performance according to PRD schema."""
         indexes = [
-            "CREATE INDEX person_name IF NOT EXISTS FOR (p:Person) ON (p.id)",
-            "CREATE INDEX company_name IF NOT EXISTS FOR (c:Company) ON (c.id)",
-            "CREATE INDEX skill_name IF NOT EXISTS FOR (s:Skill) ON (s.id)",
+            "CREATE INDEX person_name IF NOT EXISTS FOR (p:Person) ON (p.name)",
+            "CREATE INDEX skill_name IF NOT EXISTS FOR (s:Skill) ON (s.name)",
+            "CREATE INDEX company_name IF NOT EXISTS FOR (c:Company) ON (c.name)",
+            "CREATE INDEX project_title IF NOT EXISTS FOR (pr:Project) ON (pr.title)",
+            "CREATE INDEX certification_name IF NOT EXISTS FOR (cert:Certification) ON (cert.name)",
+            "CREATE INDEX university_name IF NOT EXISTS FOR (u:University) ON (u.name)",
+            "CREATE INDEX rfp_title IF NOT EXISTS FOR (r:RFP) ON (r.title)",
             "CREATE INDEX entity_base IF NOT EXISTS FOR (e:__Entity__) ON (e.id)"
         ]
 
@@ -339,52 +407,44 @@ class DataKnowledgeGraphBuilder:
             except Exception as e:
                 logger.error(f"Failed to execute validation query '{description}': {e}")
 
-        # Sample queries to verify extraction quality
+        # Check what properties exist on Person nodes
+        logger.info("\nPerson node properties:")
+        try:
+            person_props = self.graph.query("MATCH (p:Person) RETURN properties(p) as props LIMIT 3")
+            for row in person_props:
+                logger.info(f"  Person properties: {row['props']}")
+        except Exception as e:
+            logger.error(f"Failed to check Person properties: {e}")
+
+        # Check what properties exist on Skill nodes
+        logger.info("\nSkill node properties:")
+        try:
+            skill_props = self.graph.query("MATCH (s:Skill) RETURN properties(s) as props LIMIT 3")
+            for row in skill_props:
+                logger.info(f"  Skill properties: {row['props']}")
+        except Exception as e:
+            logger.error(f"Failed to check Skill properties: {e}")
+
+        # Sample queries to verify extraction quality according to PRD schema
         sample_queries = [
-            "MATCH (p:Person)-[:HAS_SKILL]->(s:Skill) RETURN p.id, s.id LIMIT 5",
-            "MATCH (p:Person)-[:WORKED_AT]->(c:Company) RETURN p.id, c.id LIMIT 5"
+            "MATCH (p:Person)-[:HAS_SKILL]->(s:Skill) RETURN p.name as person_name, s.name as skill_name LIMIT 3",
+            "MATCH (p:Person)-[:WORKED_AT]->(c:Company) RETURN p.name as person_name, c.name as company_name LIMIT 3",
+            "MATCH (p:Person)-[:WORKED_ON]->(pr:Project) RETURN p.name as person_name, pr.name as project_title LIMIT 3",
+            "MATCH (p:Person)-[:EARNED]->(cert:Certification) RETURN p.name as person_name, cert.name as cert_name LIMIT 3",
+            "MATCH (p:Person)-[:STUDIED_AT]->(u:University) RETURN p.name as person_name, u.name as university_name LIMIT 3",
+            "MATCH (p:Person)-[:ASSIGNED_TO]->(pr:Project) RETURN p.name as person_name, pr.name as project_title LIMIT 3",
+            "MATCH (pr:Project)-[:REQUIRES]->(s:Skill) RETURN pr.name as project_title, s.name as skill_name LIMIT 3",
+            "MATCH (r:RFP)-[:NEEDS]->(s:Skill) RETURN r.title as rfp_title, s.name as skill_name LIMIT 3"
         ]
 
         logger.info("\nSample relationships:")
         for query in sample_queries:
             try:
                 result = self.graph.query(query)
-                for row in result:
-                    logger.info(f"  {dict(row)}")
+                if result:
+                    for row in result:
+                        logger.info(f"  {dict(row)}")
+                else:
+                    logger.info(f"  No results for: {query.split('RETURN')[0].strip()}")
             except Exception as e:
                 logger.debug(f"Sample query failed: {e}")
-
-
-async def main():
-    """Main function to convert CVs to knowledge graph."""
-    print("Converting PDF CVs to Knowledge Graph")
-    print("=" * 50)
-
-    try:
-        # Initialize builder
-        builder = DataKnowledgeGraphBuilder()
-
-        # Process all CVs
-        processed_count = await builder.process_all_cvs()
-
-        if processed_count > 0:
-            # Validate the graph
-            builder.validate_graph()
-
-            print(f"\n✓ Successfully processed {processed_count} CV(s)")
-            print("✓ Knowledge graph created in Neo4j")
-            print("\nNext steps:")
-            print("1. Run: uv run python 3_query_knowledge_graph.py")
-            print("2. Open Neo4j Browser to explore the graph")
-            print("3. Try GraphRAG queries!")
-        else:
-            print("❌ No CVs were successfully processed")
-            print("Please check the PDF files in data/cvs_pdf/ directory")
-
-    except Exception as e:
-        logger.error(f"Failed to build knowledge graph: {e}")
-        print(f"❌ Error: {e}")
-
-
-if __name__ == "__main__":
-    asyncio.run(main())

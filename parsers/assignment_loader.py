@@ -7,8 +7,8 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from pathlib import Path
 from typing import List
-from models.project_models import ProjectData
-from models.programmer_models import ProgrammerData
+from models.project_models import ProjectData, Requirement
+from models.programmer_models import ProgrammerData, Skill
 from langchain_neo4j import Neo4jGraph
 
 # Load environment variables
@@ -69,15 +69,101 @@ class AssignmentLoader:
             logger.error("Failed to load programmers: %s", e)
             raise
 
-    def load_programmers_from_graph(self):
+    def load_programmers_from_graph(self) -> List[ProgrammerData]:
         """Fetch programmers and their skills from Neo4j."""
         query = """
-        MATCH (p:Person)-[:HAS_SKILL]->(s:Skill)
-        RETURN p.id AS id, p.name AS name, collect({skill_name: s.id}) AS skills
+        MATCH (p:Person)
+        OPTIONAL MATCH (p)-[hs:HAS_SKILL]->(s:Skill)
+        RETURN p.name AS name, p.email AS email, p.location AS location,
+               collect({name: s.name, proficiency: hs.proficiency}) AS skills
         """
-        return self.graph.query(query)
+        results = self.graph.query(query)
+        programmers = []
+        for result in results:
+            # Skip programmers with missing name
+            if not result["name"]:
+                logger.warning(f"Skipping programmer with missing name")
+                continue
 
-    def assign_programmers(self, projects: List[ProjectData], programmers: List[dict]) -> List[dict]:
+            # Filter out null skills
+            skills = [
+                Skill(name=skill["name"], proficiency=skill["proficiency"] or "Intermediate")
+                for skill in result["skills"]
+                if skill["name"] is not None
+            ]
+
+            programmer = ProgrammerData(
+                id=result["name"],
+                name=result["name"],
+                email=result["email"],
+                location=result["location"],
+                skills=skills
+            )
+            programmers.append(programmer)
+        logger.info(f"✅ Loaded {len(programmers)} programmers from graph")
+        return programmers
+
+    def load_projects_from_graph(self) -> List[ProjectData]:
+        """Load projects from Neo4j graph."""
+        from datetime import datetime
+
+        query = """
+        MATCH (p:Project)
+        OPTIONAL MATCH (p)-[r:REQUIRES]->(s:Skill)
+        WITH p, collect(DISTINCT {skill_name: s.name, min_proficiency: r.min_proficiency, is_mandatory: r.is_mandatory}) AS requirements
+        RETURN p.entity_id AS id, p.name AS name, p.client AS client, p.description AS description,
+               p.start_date AS start_date, p.end_date AS end_date,
+               p.estimated_duration_months AS estimated_duration_months,
+               p.budget AS budget, p.status AS status, p.team_size AS team_size,
+               requirements
+        """
+        results = self.graph.query(query)
+        projects = []
+        for result in results:
+            # Skip projects with missing essential data
+            if not result["id"] or not result["name"] or not result["client"] or not result["start_date"]:
+                logger.warning(f"Skipping project with missing essential data: id={result['id']}, name={result['name']}, client={result['client']}")
+                continue
+
+            # Parse date strings to date objects
+            start_date = None
+            if result["start_date"]:
+                if isinstance(result["start_date"], str):
+                    start_date = datetime.fromisoformat(result["start_date"]).date()
+                else:
+                    start_date = result["start_date"]
+
+            end_date = None
+            if result["end_date"]:
+                if isinstance(result["end_date"], str):
+                    end_date = datetime.fromisoformat(result["end_date"]).date()
+                else:
+                    end_date = result["end_date"]
+
+            # Filter out null requirements
+            requirements = [
+                Requirement(**req) for req in result["requirements"]
+                if req["skill_name"] is not None
+            ]
+
+            project = ProjectData(
+                id=result["id"],
+                name=result["name"],
+                client=result["client"],
+                description=result["description"] or "No description available",
+                start_date=start_date,
+                end_date=end_date,
+                estimated_duration_months=result["estimated_duration_months"] or 6,
+                budget=result["budget"],
+                status=result["status"] or "planned",
+                team_size=result["team_size"] or 1,
+                requirements=requirements
+            )
+            projects.append(project)
+        logger.info(f"✅ Loaded {len(projects)} projects from graph")
+        return projects
+
+    def assign_programmers(self, projects: List[ProjectData], programmers: List[ProgrammerData]) -> List[dict]:
         """Assign programmers to projects based on config rules."""
         probability = self.config["assignment"]["assignment_probability"]
         min_days = self.config["assignment"]["assignment_end_days_before_min"]
@@ -93,7 +179,7 @@ class AssignmentLoader:
             required_skills = [req.skill_name for req in project.requirements]
             eligible = [
                 p for p in programmers
-                if any(skill.get("skill_name") in required_skills for skill in p["skills"])
+                if any(skill.name in required_skills for skill in p.skills)
             ]
 
             if not eligible:
@@ -114,7 +200,7 @@ class AssignmentLoader:
             for prog in assigned:
                 assignments.append({
                     "project_id": project.id,
-                    "programmer_id": prog["id"],
+                    "programmer_id": prog.id,
                     "end_date": assignment_end_date
                 })
 
@@ -130,8 +216,8 @@ class AssignmentLoader:
         try:
             # Ensure indexes exist for fast lookup
             index_queries = [
-                "CREATE INDEX project_id IF NOT EXISTS FOR (proj:Project) ON (proj.id)",
-                "CREATE INDEX person_id IF NOT EXISTS FOR (p:Person) ON (p.id)"
+                "CREATE INDEX project_title IF NOT EXISTS FOR (proj:Project) ON (proj.title)",
+                "CREATE INDEX person_name IF NOT EXISTS FOR (p:Person) ON (p.name)"
             ]
             for query in index_queries:
                 try:
@@ -142,8 +228,8 @@ class AssignmentLoader:
             # Insert assignments
             for assignment in assignments:
                 query = """
-                MATCH (proj:Project {id: $project_id})
-                MATCH (p:Person {id: $programmer_id})
+                MATCH (proj:Project {title: $project_id})
+                MATCH (p:Person {name: $programmer_id})
                 MERGE (proj)-[:ASSIGNED_TO {end_date: $end_date}]->(p)
                 """
                 self.graph.query(query, {

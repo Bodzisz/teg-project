@@ -401,7 +401,7 @@ Helpful Answer:"""
         # Check if we have enough data
         if person_count == 0:
             print("\n⚠️  Warning: No Person nodes found in the graph!")
-            print("Please run 2_data_to_knowledge_graph.py first to populate the graph.")
+            print("Please run comprehensive_pipeline.py first to populate the graph.")
             print("Or check: uv run python 0_setup.py --check")
             return False
 

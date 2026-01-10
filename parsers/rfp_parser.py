@@ -71,12 +71,18 @@ class RFPParser:
 
         # 1. Definition of response schema
         response_schemas = [
+            ResponseSchema(name="id", description="Unique RFP identifier"),
             ResponseSchema(name="title", description="Title of the RFP"),
-            ResponseSchema(name="description", description="Short description of the RFP"),
-            ResponseSchema(name="skills", description="List of skills with name and experience_level"),
-            ResponseSchema(name="budget", description="Budget range or value"),
-            ResponseSchema(name="deadline", description="Deadline or project completion date"),
-            ResponseSchema(name="team_size", description="Expected team size as integer")
+            ResponseSchema(name="client", description="Client name"),
+            ResponseSchema(name="description", description="Description of the RFP"),
+            ResponseSchema(name="project_type", description="Type of project"),
+            ResponseSchema(name="duration_months", description="Estimated duration in months"),
+            ResponseSchema(name="team_size", description="Expected team size"),
+            ResponseSchema(name="budget_range", description="Budget range"),
+            ResponseSchema(name="start_date", description="Start date in YYYY-MM-DD format"),
+            ResponseSchema(name="location", description="Project location"),
+            ResponseSchema(name="remote_allowed", description="Boolean indicating if remote work is allowed"),
+            ResponseSchema(name="requirements", description="List of requirements with skill_name, min_proficiency, is_mandatory, preferred_certifications (always as list of strings)")
         ]
 
         output_parser = StructuredOutputParser.from_response_schemas(response_schemas)
@@ -87,6 +93,8 @@ class RFPParser:
             input_variables=["rfp_text", "format_instructions"],
             template="""
     Analyze the following RFP text and return ONLY valid JSON according to the format instructions below.
+    Return all fields exactly as specified above.
+    For preferred_certifications, always return a list of strings, even if empty.
 
     {format_instructions}
 
@@ -126,27 +134,76 @@ class RFPParser:
             logger.debug("Parsed output:\n%s", parsed_output)
             raise
 
+    
     def save_to_neo4j(self, rfp_data: RFPData):
-        """Save RFP data to Neo4j as node and relationships."""
+        """Save RFP data and create corresponding Project node to Neo4j."""
+        from datetime import timedelta
         try:
+            # Calculate end_date for project
+            end_date = rfp_data.start_date + timedelta(days=rfp_data.duration_months * 30)
+            
             query = """
-            CREATE (r:RFP {title: $title, description: $description, budget: $budget, deadline: $deadline, team_size: $team_size})
-            WITH r
-            UNWIND $skills AS skill
-            MERGE (s:Skill {name: skill.name})
-            MERGE (r)-[:NEEDS {experience_level: skill.experience_level}]->(s)
+            CREATE (r:RFP {
+                entity_id: $rfp_id,
+                title: $title,
+                client: $client,
+                description: $description,
+                project_type: $project_type,
+                duration_months: $duration_months,
+                team_size: $team_size,
+                budget_range: $budget_range,
+                start_date: $start_date,
+                location: $location,
+                remote_allowed: $remote_allowed
+            })
+            CREATE (p:Project {
+                entity_id: $project_id,
+                name: $name,
+                client: $client,
+                description: $description,
+                start_date: $start_date,
+                end_date: $end_date,
+                estimated_duration_months: $duration_months,
+                budget: $budget_range,
+                status: "planned",
+                team_size: $team_size
+            })
+            CREATE (r)-[:GENERATES]->(p)
+            WITH r, p
+            UNWIND $requirements AS req
+            MERGE (s:Skill {entity_id: req.skill_name, name: req.skill_name})
+            MERGE (r)-[:NEEDS {
+                min_proficiency: req.min_proficiency,
+                is_mandatory: req.is_mandatory,
+                preferred_certifications: req.preferred_certifications
+            }]->(s)
+            MERGE (p)-[:REQUIRES {
+                min_proficiency: req.min_proficiency,
+                is_mandatory: req.is_mandatory,
+                preferred_certifications: req.preferred_certifications
+            }]->(s)
             """
             self.graph.query(query, {
+                "rfp_id": rfp_data.id,
+                "project_id": f"PRJ-{rfp_data.id}",
                 "title": rfp_data.title,
+                "name": rfp_data.title,
+                "client": rfp_data.client,
                 "description": rfp_data.description,
-                "budget": rfp_data.budget,
-                "deadline": rfp_data.deadline,
+                "project_type": rfp_data.project_type,
+                "duration_months": rfp_data.duration_months,
                 "team_size": rfp_data.team_size,
-                "skills": [skill.model_dump() for skill in rfp_data.skills]
+                "budget_range": rfp_data.budget_range,
+                "start_date": str(rfp_data.start_date),
+                "end_date": str(end_date),
+                "location": rfp_data.location,
+                "remote_allowed": rfp_data.remote_allowed,
+                "requirements": [req.model_dump() for req in rfp_data.requirements]
             })
-            logger.info("RFP saved to Neo4j.")
+            logger.info(f"✅ RFP {rfp_data.id} and Project PRJ-{rfp_data.id} saved to Neo4j.")
         except Exception as e:
-            logger.error("Failed to save RFP to Neo4j: %s", e)
+            logger.error("❌ Failed to save RFP and Project to Neo4j: %s", e)
+
 
 
 if __name__ == "__main__":

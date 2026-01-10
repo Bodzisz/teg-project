@@ -513,7 +513,7 @@ async def main():
         if not data_dir.exists() or not list(data_dir.glob("*.pdf")):
             print(f"\n⚠️  No CV PDFs found in {data_dir}")
             print("Please run: uv run python 1_generate_data.py")
-            print("Then run: uv run python 2_data_to_knowledge_graph.py")
+            print("Then run: uv run python comprehensive_pipeline.py")
             return False
 
         print("\n✅ CV data found successfully!")

@@ -59,8 +59,20 @@ class GraphPipeline:
         if assign_programmers:
             logger.info("🔍 Stage 3: Assigning programmers...")
             try:
-                projects = self.assignment_loader.load_projects_from_graph()
+                # First, calculate and update availability for all programmers based on existing graph state
                 programmers = self.assignment_loader.load_programmers_from_graph()
+                logger.info("  Calculated availability for %d programmers...", len(programmers))
+                for p in programmers:
+                    availability = self.assignment_loader.calculate_availability(p.id)
+                    self.assignment_loader.update_graph_with_availability(p.id, availability)
+                
+                # Then proceed with assignments
+                projects = self.assignment_loader.load_projects_from_graph()
+                # Reload programmers to get updated state if necessary, or just use the list 
+                # (though availability is in graph, the python object might not need it for assign logic depending on implementation)
+                # The assign_programmers method in loader currently doesn't check availability property on object, 
+                # but it might filter based on graph state if we updated it to do so. 
+                # For now, we just pass the list we have.
                 assignments = self.assignment_loader.assign_programmers(projects, programmers)
                 self.assignment_loader.save_to_neo4j(assignments)
                 logger.info("✅ Assignments saved to graph.")

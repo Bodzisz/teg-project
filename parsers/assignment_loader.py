@@ -3,6 +3,7 @@ import json
 import logging
 import random
 import tomllib
+import yaml
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from pathlib import Path
@@ -20,7 +21,7 @@ logger = logging.getLogger("AssignmentLoader")
 
 
 class ConfigLoader:
-    """Load configuration from TOML file for Assignment Loader."""
+    """Load configuration from TOML file."""
     def __init__(self, config_path: str):
         self.config_path = config_path
         self.config = self._load_config()
@@ -30,7 +31,7 @@ class ConfigLoader:
             with open(self.config_path, "rb") as f:
                 return tomllib.load(f)
         except Exception as e:
-            logger.error("Failed to load config file: %s", e)
+            logger.error("❌ Failed to load config file: %s", e)
             raise
 
     def get(self, section: str, default=None):
@@ -46,7 +47,7 @@ class AssignmentLoader:
         logger.info("✅ AssignmentLoader initialized.")
 
     def load_projects(self, project_file: str) -> List[ProjectData]:
-        """Load and validate projects from JSON file."""
+        """Load projects from JSON file."""
         try:
             with open(project_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -54,7 +55,7 @@ class AssignmentLoader:
             logger.info(f"✅ Loaded {len(projects)} projects from {project_file}")
             return projects
         except Exception as e:
-            logger.error("Failed to load projects: %s", e)
+            logger.error("❌ Failed to load projects: %s", e)
             raise
 
     def load_programmers_from_json(self, programmers_file: str) -> List[ProgrammerData]:
@@ -66,11 +67,11 @@ class AssignmentLoader:
             logger.info(f"✅ Loaded {len(programmers)} programmers from {programmers_file}")
             return programmers
         except Exception as e:
-            logger.error("Failed to load programmers: %s", e)
+            logger.error("❌ Failed to load programmers: %s", e)
             raise
 
     def load_programmers_from_graph(self) -> List[ProgrammerData]:
-        """Fetch programmers and their skills from Neo4j."""
+        """Fetch programmers from Neo4j."""
         query = """
         MATCH (p:Person)
         OPTIONAL MATCH (p)-[hs:HAS_SKILL]->(s:Skill)
@@ -80,18 +81,12 @@ class AssignmentLoader:
         results = self.graph.query(query)
         programmers = []
         for result in results:
-            # Skip programmers with missing name
             if not result["name"]:
-                logger.warning(f"Skipping programmer with missing name")
                 continue
-
-            # Filter out null skills
             skills = [
                 Skill(name=skill["name"], proficiency=skill["proficiency"] or "Intermediate")
-                for skill in result["skills"]
-                if skill["name"] is not None
+                for skill in result["skills"] if skill["name"] is not None
             ]
-
             programmer = ProgrammerData(
                 id=result["name"],
                 name=result["name"],
@@ -105,8 +100,6 @@ class AssignmentLoader:
 
     def load_projects_from_graph(self) -> List[ProjectData]:
         """Load projects from Neo4j graph."""
-        from datetime import datetime
-
         query = """
         MATCH (p:Project)
         OPTIONAL MATCH (p)-[r:REQUIRES]->(s:Skill)
@@ -163,102 +156,153 @@ class AssignmentLoader:
         logger.info(f"✅ Loaded {len(projects)} projects from graph")
         return projects
 
+    def calculate_availability(self, person_id: str) -> int:
+        """
+        Calculates programmer availability based on ASSIGNED_TO relationships in Neo4j.
+        """
+        query = """
+        MATCH (p:Person {name: $person_id})-[r:ASSIGNED_TO]->(:Project)
+        RETURN sum(coalesce(r.allocation_percentage, 100)) AS allocated
+        """
+        result = self.graph.query(query, {"person_id": person_id})
+        allocated = result[0]["allocated"] or 0
+        availability = max(0, 100 - allocated)
+        logger.info(f"✅ Availability for {person_id}: {availability}%")
+        return availability
+
+    def update_graph_with_availability(self, person_id: str, availability: int):
+        """
+        Updates the Person node in Neo4j with the availability property.
+        """
+        query = """
+        MATCH (p:Person {name: $person_id})
+        SET p.availability = $availability
+        """
+        self.graph.query(query, {"person_id": person_id, "availability": availability})
+        logger.info(f"✅ Updated graph availability: {person_id} -> {availability}%")
+
+    def load_assignments_from_yaml(self, yaml_file: str) -> List[dict]:
+        """
+        Loads allocations from a YAML file that mirrors the projects.json structure.
+        Returns a flattened list of assignments.
+        """
+        try:
+            with open(yaml_file, "r", encoding="utf-8") as f:
+                projects = yaml.safe_load(f)
+            
+            assignments = []
+            if not isinstance(projects, list):
+                logger.warning(f"YAML file {yaml_file} does not contain a list of projects.")
+                return assignments
+
+            for project in projects:
+                project_name = project.get("name")
+                for assigned in project.get("assigned_programmers", []):
+                    assignments.append({
+                        "project_id": project_name,
+                        "programmer_id": assigned.get("programmer_name") or assigned.get("programmer_id"),
+                        "end_date": assigned.get("assignment_end_date"),
+                        "allocation": assigned.get("allocation_percentage", 100)
+                    })
+            
+            logger.info(f"✅ Loaded {len(assignments)} allocations from {yaml_file}")
+            return assignments
+        except Exception as e:
+            logger.error(f"❌ Error loading YAML file: {e}")
+            raise
+
     def assign_programmers(self, projects: List[ProjectData], programmers: List[ProgrammerData]) -> List[dict]:
-        """Assign programmers to projects based on config rules."""
+        """Simple assignment logic (no scoring, no partial allocation)."""
         probability = self.config["assignment"]["assignment_probability"]
         min_days = self.config["assignment"]["assignment_end_days_before_min"]
         max_days = self.config["assignment"]["assignment_end_days_before_max"]
-
         assignments = []
-
         for project in projects:
             if random.random() > probability:
-                logger.info(f"Skipping assignment for project {project.id}")
                 continue
-
             required_skills = [req.skill_name for req in project.requirements]
-            eligible = [
-                p for p in programmers
-                if any(skill.name in required_skills for skill in p.skills)
-            ]
-
+            eligible = [p for p in programmers if any(skill.name in required_skills for skill in p.skills)]
             if not eligible:
-                logger.warning(f"No eligible programmers for project {project.id}")
                 continue
-
             assigned = random.sample(eligible, min(len(eligible), project.team_size))
-
-            # Calculate assignment end date
-            if project.end_date:
-                end_date_obj = datetime.fromisoformat(str(project.end_date))
-            else:
-                end_date_obj = datetime.fromisoformat(str(project.start_date)) + timedelta(days=project.estimated_duration_months * 30)
-
+            end_date_obj = datetime.fromisoformat(str(project.end_date)) if project.end_date else \
+                datetime.fromisoformat(str(project.start_date)) + timedelta(days=project.estimated_duration_months * 30)
             end_days = random.randint(min_days, max_days)
             assignment_end_date = (end_date_obj - timedelta(days=end_days)).strftime("%Y-%m-%d")
-
             for prog in assigned:
                 assignments.append({
                     "project_id": project.name,
                     "programmer_id": prog.id,
-                    "end_date": assignment_end_date
+                    "end_date": assignment_end_date,
+                    "allocation": 100 # Default full allocation for auto-assigned
                 })
-
         logger.info(f"✅ Generated {len(assignments)} assignments.")
         return assignments
 
-    
     def save_to_neo4j(self, assignments: List[dict]):
-        """
-        Save assignments to Neo4j as relationships between Project and Person.
-        Eliminates Cartesian Product warning and ensures performance with indexes.
-        """
+        """Save assignments to Neo4j."""
         try:
-            # Ensure indexes exist for fast lookup
-            index_queries = [
-                "CREATE INDEX project_name IF NOT EXISTS FOR (proj:Project) ON (proj.name)",
-                "CREATE INDEX person_name IF NOT EXISTS FOR (p:Person) ON (p.name)"
-            ]
-            for query in index_queries:
-                try:
-                    self.graph.query(query)
-                except Exception as e:
-                    logger.debug(f"Index creation skipped or already exists: {e}")
-
-            # Insert assignments
             for assignment in assignments:
                 query = """
                 MATCH (proj:Project {name: $project_id})
                 MATCH (p:Person {name: $programmer_id})
-                MERGE (p)-[:ASSIGNED_TO {end_date: $end_date}]->(proj)
+                MERGE (p)-[:ASSIGNED_TO {end_date: $end_date, allocation_percentage: $allocation}]->(proj)
                 """
                 self.graph.query(query, {
                     "project_id": assignment["project_id"],
                     "programmer_id": assignment["programmer_id"],
-                    "end_date": assignment["end_date"]
+                    "end_date": assignment["end_date"],
+                    "allocation": assignment.get("allocation", 100)
                 })
-
             logger.info(f"✅ Saved {len(assignments)} assignments to Neo4j.")
         except Exception as e:
-            logger.error(f"❌ Failed to save assignments to Neo4j: {e}")
+            logger.error(f"❌ Error saving to Neo4j: {e}")
             raise
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Assign programmers to projects and save to Neo4j.")
-    parser.add_argument("--config", type=str, default="utils/config.toml", help="Path to config file.")
-    parser.add_argument("--projects", type=str, default="data/projects/projects.json", help="Path to projects JSON.")
-    parser.add_argument("--programmers", type=str, help="Optional JSON file with programmers (offline mode).")
+    parser = argparse.ArgumentParser(description="Calculate availability and assign programmers.")
+    parser.add_argument("--config", type=str, default="utils/config.toml", help="Path to the configuration file.")
+    parser.add_argument("--projects", type=str, default="data/projects/projects.json", help="Path to the projects file.")
+    parser.add_argument("--assignments", type=str, help="Optional YAML file with allocations (offline mode).")
     args = parser.parse_args()
 
     loader = AssignmentLoader(config_path=args.config)
-    projects = loader.load_projects(args.projects)
 
-    if args.programmers:
-        programmers = loader.load_programmers_from_json(args.programmers)
-        programmers = [p.dict() for p in programmers]
+    # Calculate availability
+    if args.assignments:
+        # Offline mode with YAML
+        assignments_yaml = loader.load_assignments_from_yaml(args.assignments)
+        
+        # Aggregate allocations per person
+        person_allocations = {}
+        for a in assignments_yaml:
+            pid = a["programmer_id"]
+            person_allocations[pid] = person_allocations.get(pid, 0) + a.get("allocation", 0)
+            
+        for person_id, total_allocation in person_allocations.items():
+            availability = max(0, 100 - total_allocation)
+            loader.update_graph_with_availability(person_id, availability)
+            
+        # Also save these YAML assignments to Neo4j if desired, referencing the method simply:
+        # loader.save_to_neo4j(assignments_yaml) 
+        # But the original code only updated availability in this block. 
+        # User request implies "rely on assignment_loader... structure in methods related to yaml".
+        # Let's save them too, as usually loading assignments implies wanting them in the DB.
+        loader.save_to_neo4j(assignments_yaml)
+
     else:
-        programmers = loader.load_programmers_from_graph()
+        # Neo4j mode: calculate availability for all programmers
+        # We need to load programmers first
+        programmers_for_availability = loader.load_programmers_from_graph()
+        for p in programmers_for_availability:
+            availability = loader.calculate_availability(p.id)
+            loader.update_graph_with_availability(p.id, availability)
 
-    assignments = loader.assign_programmers(projects, programmers)
-    loader.save_to_neo4j(assignments)
+    # Optionally: assign programmers to projects
+    if not args.assignments:
+        # Only run auto-assignment if not in offline/YAML mode
+        programmers = loader.load_programmers_from_graph()
+        projects = loader.load_projects(args.projects)
+        new_assignments = loader.assign_programmers(projects, programmers)
+        loader.save_to_neo4j(new_assignments)

@@ -4,6 +4,7 @@ import asyncio
 from pathlib import Path
 from parsers.rfp_parser import RFPParser, ConfigLoader
 from parsers.assignment_loader import AssignmentLoader
+from matching_engine import MatchingEngine
 import sys
 sys.path.append('.')
 from cv_knowledge_graph_builder import DataKnowledgeGraphBuilder
@@ -14,16 +15,17 @@ logger = logging.getLogger("GraphPipeline")
 
 
 class GraphPipeline:
-    """Comprehensive pipeline: CVs -> RFP -> Projects -> Assignments."""
+    """Comprehensive pipeline: CVs -> RFP -> Projects -> Assignments -> Matching."""
     def __init__(self, config_path: str, clear_graph: bool = False):
         self.config_loader = ConfigLoader(config_path)
         self.config = self.config_loader.config
         self.cv_builder = DataKnowledgeGraphBuilder(config_path, clear_graph=clear_graph)
         self.rfp_parser = RFPParser(model_name=self.config.get("llm", {}).get("model", "gpt-4o-mini"))
         self.assignment_loader = AssignmentLoader(config_path=config_path)
+        self.matching_engine = MatchingEngine()
         logger.info("✅ Comprehensive GraphPipeline initialized.")
 
-    async def run(self, process_cvs: bool = True, parse_rfp: bool = True, assign_programmers: bool = True):
+    async def run(self, process_cvs: bool = True, parse_rfp: bool = True, assign_programmers: bool = True, run_matching: bool = True):
         """Runs the pipeline in cascade mode."""
         if process_cvs:
             logger.info("🔍 Stage 1: Processing CVs to knowledge graph...")
@@ -56,8 +58,26 @@ class GraphPipeline:
                     except Exception as e:
                         logger.error("❌ Error during RFP processing: %s", e)
 
+        if run_matching:
+            logger.info("🔍 Stage 3: Matching Candidates to RFPs...")
+            try:
+                # Find all RFPs in the graph
+                query = "MATCH (r:RFP) RETURN r.id as id, r.title as title"
+                rfps = self.matching_engine.graph.query(query)
+                
+                if not rfps:
+                    logger.warning("⚠ No RFPs found in graph for matching.")
+                else:
+                    for rfp in rfps:
+                        rfp_id = rfp.get("id") or rfp.get("title")
+                        logger.info(f"  Ranking candidates for RFP: {rfp_id}")
+                        self.matching_engine.rank_candidates(rfp_id)
+                    logger.info("✅ Matching completed for all RFPs.")
+            except Exception as e:
+                logger.error("❌ Error during candidate matching: %s", e)
+
         if assign_programmers:
-            logger.info("🔍 Stage 3: Assigning programmers...")
+            logger.info("🔍 Stage 4: Assigning programmers to Projects...")
             try:
                 # First, calculate and update availability for all programmers based on existing graph state
                 programmers = self.assignment_loader.load_programmers_from_graph()
@@ -67,12 +87,23 @@ class GraphPipeline:
                     self.assignment_loader.update_graph_with_availability(p.id, availability)
                 
                 # Then proceed with assignments
-                projects = self.assignment_loader.load_projects_from_graph()
-                # Reload programmers to get updated state if necessary, or just use the list 
-                # (though availability is in graph, the python object might not need it for assign logic depending on implementation)
-                # The assign_programmers method in loader currently doesn't check availability property on object, 
-                # but it might filter based on graph state if we updated it to do so. 
-                # For now, we just pass the list we have.
+                # Prefer loading projects from YAML/JSON file where requirements are explicitly defined
+                projects_dir = self.config.get("output", {}).get("projects_dir", "data/projects")
+                projects_yaml = Path(projects_dir) / "projects.yaml"
+                projects_json = Path(projects_dir) / "projects.json"
+                
+                if projects_yaml.exists():
+                     projects_file = str(projects_yaml)
+                else:
+                     projects_file = str(projects_json)
+                     
+                logger.info(f"  Loading projects from: {projects_file}")
+                projects = self.assignment_loader.load_projects(projects_file)
+                
+                # Check current availability before assigning
+                logger.info("  Re-verifying programmer availability...")
+                programmers = self.assignment_loader.load_programmers_from_graph()
+                
                 assignments = self.assignment_loader.assign_programmers(projects, programmers)
                 self.assignment_loader.save_to_neo4j(assignments)
                 logger.info("✅ Assignments saved to graph.")
@@ -89,12 +120,18 @@ if __name__ == "__main__":
     parser.add_argument("--config", type=str, default="utils/config.toml", help="Path to configuration file.")
     parser.add_argument("--skip-cvs", action="store_true", help="Skip CV processing stage.")
     parser.add_argument("--skip-rfp", action="store_true", help="Skip RFP parsing stage.")
+    parser.add_argument("--skip-matching", action="store_true", help="Skip RFP candidate matching stage.")
     parser.add_argument("--skip-assign", action="store_true", help="Skip programmer assignment stage.")
     parser.add_argument("--clear-graph", action="store_true", help="Clear the entire graph before processing (WARNING: deletes all data).")
     args = parser.parse_args()
 
     async def main():
         pipeline = GraphPipeline(config_path=args.config, clear_graph=args.clear_graph)
-        await pipeline.run(process_cvs=not args.skip_cvs, parse_rfp=not args.skip_rfp, assign_programmers=not args.skip_assign)
+        await pipeline.run(
+            process_cvs=not args.skip_cvs, 
+            parse_rfp=not args.skip_rfp, 
+            run_matching=not args.skip_matching,
+            assign_programmers=not args.skip_assign
+        )
 
     asyncio.run(main())

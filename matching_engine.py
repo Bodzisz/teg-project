@@ -98,10 +98,10 @@ class MatchingEngine:
              reduce(s = 0.0, req in required_skills | 
                 s + CASE 
                     WHEN req IN [ps IN person_skills | ps.name] THEN 
-                        10.0 + CASE [x IN person_skills WHERE x.name = req][0].proficiency
-                            WHEN 'Expert' THEN 8.0
-                            WHEN 'Advanced' THEN 5.0
-                            WHEN 'Intermediate' THEN 3.0
+                        10.0 + CASE toInteger([x IN person_skills WHERE x.name = req][0].proficiency)
+                            WHEN 5 THEN 8.0
+                            WHEN 4 THEN 5.0
+                            WHEN 3 THEN 3.0
                             ELSE 1.0
                         END
                     ELSE 0.0
@@ -129,9 +129,30 @@ class MatchingEngine:
         try:
             results = self.graph.query(query, {"rfp_id": rfp_id, "top_n": top_n})
             logger.info(f"✅ Ranked {len(results)} candidates for {rfp_id}")
+            # Enhance results with rfp_id for consistency if needed, though mostly used for display here
+            for r in results:
+                r['rfp_id'] = rfp_id
             return results
         except Exception as e:
             logger.error(f"❌ Error ranking candidates: {e}")
+            return []
+
+    def get_all_matches(self) -> List[Dict[str, Any]]:
+        """
+        Retrieves all MATCHED_TO relationships from the graph.
+        Returns a list of dicts: {person_id, rfp_id, score}
+        """
+        query = """
+        MATCH (p:Person)-[m:MATCHED_TO]->(r:RFP)
+        RETURN p.name as person_id, r.id as rfp_id, r.title as rfp_title, m.score as score
+        ORDER BY p.name, m.score DESC
+        """
+        try:
+            results = self.graph.query(query)
+            logger.info(f"✅ Retrieved {len(results)} matches from graph")
+            return results
+        except Exception as e:
+            logger.error(f"❌ Error retrieving matches: {e}")
             return []
 
 if __name__ == "__main__":

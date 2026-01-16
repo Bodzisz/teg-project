@@ -104,7 +104,13 @@ class GraphPipeline:
                 logger.info("  Re-verifying programmer availability...")
                 programmers = self.assignment_loader.load_programmers_from_graph()
                 
-                assignments = self.assignment_loader.assign_programmers(projects, programmers)
+                # Fetch all pre-calculated matches
+                logger.info("  Fetching pre-calculated matches...")
+                all_matches = self.matching_engine.get_all_matches()
+                
+                # Perform assignment based on matches and partial allocation logic
+                assignments = self.assignment_loader.assign_based_on_matches(all_matches, projects, programmers)
+                
                 self.assignment_loader.save_to_neo4j(assignments)
                 logger.info("✅ Assignments saved to graph.")
             except Exception as e:

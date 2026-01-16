@@ -220,8 +220,106 @@ class AssignmentLoader:
             logger.error(f"❌ Error loading YAML file: {e}")
             raise
 
+    def assign_based_on_matches(self, matches: List[dict], projects: List[ProjectData], programmers: List[ProgrammerData]) -> List[dict]:
+        """
+        Assigns programmers based on pre-calculated matches (scores).
+        Implements partial allocation: Availability is distributed proportionally to the score.
+        """
+        assignments = []
+        min_days = self.config["assignment"].get("assignment_end_days_before_min", 1)
+        max_days = self.config["assignment"].get("assignment_end_days_before_max", 30)
+        
+        # Create a lookup for projects by title (or id)
+        project_map = {p.name: p for p in projects}
+        project_map.update({p.id: p for p in projects}) # fallback lookup
+        
+        # Group matches by person
+        matches_by_person = {}
+        for m in matches:
+            pid = m["person_id"]
+            if pid not in matches_by_person:
+                matches_by_person[pid] = []
+            matches_by_person[pid].append(m)
+            
+        # Group programmers by ID for easy access to availability
+        programmer_map = {p.id: p for p in programmers}
+
+        for pid, person_matches in matches_by_person.items():
+            programmer = programmer_map.get(pid)
+            if not programmer:
+                logger.warning(f"Programmer {pid} found in matches but not in loaded programmers.")
+                continue
+
+            # Calculate total score to determine proportions
+            valid_stats = []
+            for pm in person_matches:
+                rfp_title = pm.get("rfp_title") or pm.get("rfp_id")
+                # Try exact match first, then by ID, then case-insensitive
+                project = project_map.get(rfp_title) or project_map.get(pm.get("rfp_id"))
+                
+                if project:
+                     valid_stats.append({"match": pm, "project": project})
+                else:
+                    # Debug log - usually normal if projects file doesn't match all RFPs
+                    # logger.debug(f"Project not found for RFP: {rfp_title}")
+                    pass
+
+            if not valid_stats:
+                continue
+
+            # If availability is 0, we can't assign anything unless we decide to overbook.
+            # But the user asked why 0 assignments? Maybe everyone is fully booked?
+            # Let's log if someone is skipped due to availability.
+            if programmer.availability <= 0:
+                logger.debug(f"Skipping {pid} due to 0 availability.")
+                continue
+
+            if not valid_stats:
+                continue
+
+            total_score = sum(item["match"]["score"] for item in valid_stats)
+            if total_score == 0:
+                continue
+                
+            available_capacity = programmer.availability
+            
+            for item in valid_stats:
+                match_data = item["match"]
+                project = item["project"]
+                score = match_data["score"]
+                
+                # Calculate share
+                share = score / total_score
+                raw_allocation = available_capacity * share
+                
+                # Round to nearest 5 or 10 maybe? Let's keep it integer
+                allocation = int(round(raw_allocation))
+                
+                if allocation < 5: # Minimum threshold to avoid tiny fracs
+                    continue
+                    
+                # Calculate dates
+                end_date_obj = datetime.fromisoformat(str(project.end_date)) if project.end_date else \
+                    datetime.fromisoformat(str(project.start_date)) + timedelta(days=project.estimated_duration_months * 30)
+                end_days = random.randint(min_days, max_days)
+                assignment_end_date = (end_date_obj - timedelta(days=end_days)).strftime("%Y-%m-%d")
+
+                assignments.append({
+                    "project_id": project.name,
+                    "programmer_id": pid,
+                    "start_date": str(project.start_date),
+                    "end_date": assignment_end_date,
+                    "allocation": allocation
+                })
+                
+                # We do not subtract from programmer.availability here because we distributed the *current* availability
+                # If we were processing sequentially, we would, but here we did a batch distribution of the *whole* available block.
+                
+        logger.info(f"✅ Generated {len(assignments)} assignments based on matches.")
+        return assignments
+
     def assign_programmers(self, projects: List[ProjectData], programmers: List[ProgrammerData]) -> List[dict]:
-        """Assign programmers based on multi-factor scoring (Skills, Experience, Availability)."""
+        """Legacy local assignment logic - kept for compatibility if needed."""
         probability = self.config["assignment"]["assignment_probability"]
         min_days = self.config["assignment"]["assignment_end_days_before_min"]
         max_days = self.config["assignment"]["assignment_end_days_before_max"]
@@ -281,6 +379,7 @@ class AssignmentLoader:
                     assignments.append({
                         "project_id": project.name,
                         "programmer_id": prog.id,
+                        "start_date": str(project.start_date),
                         "end_date": assignment_end_date,
                         "allocation": allocation
                     })
@@ -298,12 +397,22 @@ class AssignmentLoader:
                 query = """
                 MATCH (proj:Project {name: $project_id})
                 MATCH (p:Person {name: $programmer_id})
-                MERGE (p)-[:ASSIGNED_TO {end_date: $end_date, allocation_percentage: $allocation}]->(proj)
+                MERGE (p)-[:ASSIGNED_TO {
+                    end_date: date($end_date), 
+                    allocation_percentage: $allocation,
+                    start_date: date($start_date)
+                }]->(proj)
                 """
+                
+                # Check if dates are already strings or date objects
+                start_date_str = str(assignment.get("start_date", datetime.now().date()))
+                end_date_str = str(assignment["end_date"])
+
                 self.graph.query(query, {
                     "project_id": assignment["project_id"],
                     "programmer_id": assignment["programmer_id"],
-                    "end_date": assignment["end_date"],
+                    "start_date": start_date_str,
+                    "end_date": end_date_str,
                     "allocation": assignment.get("allocation", 100)
                 })
             logger.info(f"✅ Saved {len(assignments)} assignments to Neo4j.")

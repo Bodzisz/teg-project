@@ -16,3 +16,5 @@ class ProgrammerData(BaseModel):
     skills: List[Skill] = Field(..., description="Lista umiejętności z poziomem")
     projects: List[str] = Field(default_factory=list, description="Lista projektów, w których uczestniczył")
     certifications: List[str] = Field(default_factory=list, description="Lista certyfikatów")
+    availability: Optional[float] = Field(100.0, description="Dostępność programisty (procent)")
+    years_experience: Optional[int] = Field(0, description="Lata doświadczenia")

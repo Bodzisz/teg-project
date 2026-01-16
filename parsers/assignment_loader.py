@@ -47,11 +47,20 @@ class AssignmentLoader:
         logger.info("✅ AssignmentLoader initialized.")
 
     def load_projects(self, project_file: str) -> List[ProjectData]:
-        """Load projects from JSON file."""
+        """Load projects from JSON or YAML file."""
         try:
             with open(project_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            projects = [ProjectData(**item) for item in data]
+                if project_file.endswith(('.yaml', '.yml')):
+                    data = yaml.safe_load(f)
+                else:
+                    data = json.load(f)
+            
+            projects = []
+            for item in data:
+                # Handle potential difference in structure if necessary
+                # YAML currently matches JSON structure mostly
+                projects.append(ProjectData(**item))
+                
             logger.info(f"✅ Loaded {len(projects)} projects from {project_file}")
             return projects
         except Exception as e:
@@ -76,6 +85,7 @@ class AssignmentLoader:
         MATCH (p:Person)
         OPTIONAL MATCH (p)-[hs:HAS_SKILL]->(s:Skill)
         RETURN p.name AS name, p.email AS email, p.location AS location,
+               p.years_experience AS years_experience, p.availability AS availability,
                collect({name: s.name, proficiency: hs.proficiency}) AS skills
         """
         results = self.graph.query(query)
@@ -92,6 +102,8 @@ class AssignmentLoader:
                 name=result["name"],
                 email=result["email"],
                 location=result["location"],
+                years_experience=result.get("years_experience", 0),
+                availability=result.get("availability", 100.0),
                 skills=skills
             )
             programmers.append(programmer)
@@ -113,12 +125,10 @@ class AssignmentLoader:
         results = self.graph.query(query)
         projects = []
         for result in results:
-            # Skip projects with missing essential data
             if not result["id"] or not result["name"] or not result["client"] or not result["start_date"]:
-                logger.warning(f"Skipping project with missing essential data: id={result['id']}, name={result['name']}, client={result['client']}")
+                # logger.warning(f"Skipping project with missing essential data...") 
                 continue
 
-            # Parse date strings to date objects
             start_date = None
             if result["start_date"]:
                 if isinstance(result["start_date"], str):
@@ -133,7 +143,6 @@ class AssignmentLoader:
                 else:
                     end_date = result["end_date"]
 
-            # Filter out null requirements
             requirements = [
                 Requirement(**req) for req in result["requirements"]
                 if req["skill_name"] is not None
@@ -212,30 +221,73 @@ class AssignmentLoader:
             raise
 
     def assign_programmers(self, projects: List[ProjectData], programmers: List[ProgrammerData]) -> List[dict]:
-        """Simple assignment logic (no scoring, no partial allocation)."""
+        """Assign programmers based on multi-factor scoring (Skills, Experience, Availability)."""
         probability = self.config["assignment"]["assignment_probability"]
         min_days = self.config["assignment"]["assignment_end_days_before_min"]
         max_days = self.config["assignment"]["assignment_end_days_before_max"]
         assignments = []
+        
+        proficiency_map = {"Beginner": 1, "Intermediate": 3, "Advanced": 5, "Expert": 8}
+
         for project in projects:
             if random.random() > probability:
                 continue
+            
             required_skills = [req.skill_name for req in project.requirements]
-            eligible = [p for p in programmers if any(skill.name in required_skills for skill in p.skills)]
+            
+            # Filter eligible candidates (must have at least one skill and positive availability)
+            eligible = [p for p in programmers if p.availability > 0 and any(skill.name in required_skills for skill in p.skills)]
+            
             if not eligible:
                 continue
-            assigned = random.sample(eligible, min(len(eligible), project.team_size))
+
+            # Calculate scores
+            scored_candidates = []
+            for p in eligible:
+                score = 0
+                
+                # Skill Score
+                p_skills_map = {s.name: s.proficiency for s in p.skills}
+                for r_skill in required_skills:
+                    if r_skill in p_skills_map:
+                        score += 10
+                        score += proficiency_map.get(p_skills_map[r_skill], 1)
+                
+                # Experience Score
+                score += (p.years_experience or 0) * 2
+                
+                # Availability Score (preference for those with more availability)
+                score += (p.availability or 0) * 0.5
+                
+                scored_candidates.append((score, p))
+            
+            # Sort by score descending
+            scored_candidates.sort(key=lambda x: x[0], reverse=True)
+            
+            # Select top candidates (up to team size)
+            assigned_count = min(len(scored_candidates), project.team_size)
+            best_candidates = [p for _, p in scored_candidates[:assigned_count]]
+
             end_date_obj = datetime.fromisoformat(str(project.end_date)) if project.end_date else \
                 datetime.fromisoformat(str(project.start_date)) + timedelta(days=project.estimated_duration_months * 30)
             end_days = random.randint(min_days, max_days)
             assignment_end_date = (end_date_obj - timedelta(days=end_days)).strftime("%Y-%m-%d")
-            for prog in assigned:
-                assignments.append({
-                    "project_id": project.name,
-                    "programmer_id": prog.id,
-                    "end_date": assignment_end_date,
-                    "allocation": 100 # Default full allocation for auto-assigned
-                })
+
+            for prog in best_candidates:
+                # Determine allocation: allocate 100% or remaining availability
+                allocation = min(100.0, prog.availability)
+                
+                if allocation > 0:
+                    assignments.append({
+                        "project_id": project.name,
+                        "programmer_id": prog.id,
+                        "end_date": assignment_end_date,
+                        "allocation": allocation
+                    })
+                    
+                    # Update in-memory availability to prioritize distribution
+                    prog.availability -= allocation
+                    
         logger.info(f"✅ Generated {len(assignments)} assignments.")
         return assignments
 

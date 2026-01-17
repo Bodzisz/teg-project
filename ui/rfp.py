@@ -1,8 +1,12 @@
 import streamlit as st
 import os
+import tempfile
+import shutil
+import time
 from langchain_neo4j import Neo4jGraph
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
+from parsers.rfp_parser import RFPParser
 
 # Load environment variables
 load_dotenv(override=True)
@@ -19,6 +23,19 @@ def get_graph_connection():
     except Exception as e:
         st.error(f"Failed to connect to Neo4j: {e}")
         return None
+
+def delete_rfp(graph, rfp_id):
+    """Delete an RFP and its relationships from the database."""
+    query = """
+    MATCH (r:RFP {entity_id: $rfp_id})
+    DETACH DELETE r
+    """
+    try:
+        graph.query(query, {"rfp_id": rfp_id})
+        return True
+    except Exception as e:
+        st.error(f"Error deleting RFP: {e}")
+        return False
 
 def fetch_rfps(graph):
     """Fetch all RFP nodes with their details and requirements."""
@@ -53,14 +70,105 @@ def calculate_end_date(start_date_str, duration_months):
     except Exception:
         return "N/A"
 
+def process_uploaded_files(uploaded_files):
+    """Process uploaded RFP PDF files."""
+    if not uploaded_files:
+        return
+
+    if len(uploaded_files) > 10:
+        st.error(f"⚠️ Limit exceeded: You uploaded {len(uploaded_files)} files. Please upload a maximum of 10 files.")
+        return
+
+    rfp_parser = RFPParser()
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+
+    success_count = 0
+    errors = []
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        total_files = len(uploaded_files)
+        
+        for i, uploaded_file in enumerate(uploaded_files):
+            status_text.text(f"Processing {uploaded_file.name} ({i+1}/{total_files})...")
+            
+            try:
+                # Save uploaded file to temp directory
+                file_path = os.path.join(temp_dir, uploaded_file.name)
+                with open(file_path, "wb") as f:
+                    f.write(uploaded_file.getbuffer())
+
+                # Extract text
+                text = rfp_parser.extract_text_from_pdf(file_path)
+                if not text:
+                    errors.append(f"{uploaded_file.name}: No text extracted.")
+                    continue
+
+                # Parse and Save
+                rfp_data = rfp_parser.parse_rfp(text)
+                rfp_parser.save_to_neo4j(rfp_data)
+                
+                success_count += 1
+            
+            except Exception as e:
+                errors.append(f"{uploaded_file.name}: {str(e)}")
+            
+            finally:
+                progress_bar.progress((i + 1) / total_files)
+
+    status_text.empty()
+    progress_bar.empty()
+
+    if success_count > 0:
+        # Success message is handled in render_rfp via session state
+        st.toast(f"Processed {success_count} RFPs", icon="✅")
+    
+    if errors:
+        with st.expander("⚠️ Processing Errors", expanded=True):
+            for err in errors:
+                st.error(err)
+        
+    return success_count > 0
+
+# Initialize session state for uploader key and success flag
+if "rfp_uploader_key" not in st.session_state:
+    st.session_state["rfp_uploader_key"] = 0
+
+if "rfp_upload_success" not in st.session_state:
+    st.session_state["rfp_upload_success"] = False
+
 def render_rfp():
     """Render the RFP Explorer UI."""
     st.header("📂 RFP Explorer")
     st.markdown("Browse and analyze available Request for Proposals.")
 
+    # Show success message if flag is set, then clear it
+    if st.session_state.get("rfp_upload_success"):
+        st.success("✅ Files successfully processed and saved!")
+        st.session_state["rfp_upload_success"] = False
+
     graph = get_graph_connection()
     if not graph:
         return
+
+    # --- File Upload Section ---
+    # Use session state to control 'expanded' would be complex, but defaulting to False
+    # combined with st.rerun() works because rerun resets the widget state unless persisted.
+    # We want it closed after success (rerun), so expanded=False is correct.
+    with st.expander("📤 Upload New RFPs", expanded=False):
+        uploaded_files = st.file_uploader(
+            "Upload RFP PDFs (Max 10 files)", 
+            type=["pdf"], 
+            accept_multiple_files=True,
+            key=f"rfp_uploader_{st.session_state['rfp_uploader_key']}"
+        )
+        
+        if uploaded_files:
+             if st.button("Process Files", type="primary"):
+                if process_uploaded_files(uploaded_files):
+                    st.session_state["rfp_uploader_key"] += 1
+                    st.session_state["rfp_upload_success"] = True
+                    st.rerun()
 
     # Fetch RFPs
     rfp_data = fetch_rfps(graph)
@@ -140,5 +248,8 @@ def render_rfp():
         ## TODO: Implement matching candidates
         ac1.button("Find Matching Candidates", use_container_width=True, type="primary")
         
-        ## TODO: Implement complete RFP (this will remove RFP from db after candidates are assigned to projects)
-        ac2.button("Complete RFP", use_container_width=True, type="secondary")
+        if ac2.button("Complete RFP", use_container_width=True, type="secondary"):
+            if delete_rfp(graph, rfp.get('entity_id')):
+                st.toast(f"✅ RFP '{rfp.get('title')}' completed and removed.", icon="✅")
+                time.sleep(1) # Allow toast to appear
+                st.rerun()

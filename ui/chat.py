@@ -20,9 +20,22 @@ def render_chat():
 
     st.markdown("Ask questions about candidates, skills, companies, and more based on the CV database.")
     
+
+    
+    # Add a button to start a new conversation in the sidebar
+    with st.sidebar:
+        if st.button("Start New Conversation", type="primary", use_container_width=True):
+            st.session_state.messages = []
+            st.session_state.conversation_id = None
+            st.rerun()
+    
     # Initialize chat history
     if "messages" not in st.session_state:
         st.session_state.messages = []
+
+    # Initialize conversation ID
+    if "conversation_id" not in st.session_state:
+        st.session_state.conversation_id = None
 
     # Display chat messages from history on app rerun
     for message in st.session_state.messages:
@@ -48,7 +61,11 @@ def render_chat():
             with st.spinner("Thinking..."):
                 try:
                     # Query the graph
-                    response = system.query_graph(prompt)
+                    response = system.query_graph(prompt, conversation_id=st.session_state.conversation_id)
+                    
+                    # Update conversation ID if new
+                    if response.get("conversation_id"):
+                        st.session_state.conversation_id = response["conversation_id"]
                     
                     answer = response.get("answer", "No answer found.")
                     cypher = response.get("cypher_query", "")

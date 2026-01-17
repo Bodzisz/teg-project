@@ -12,7 +12,8 @@ from dotenv import load_dotenv
 load_dotenv(override=True)
 
 import os
-from typing import List, Dict, Any
+import uuid
+from typing import List, Dict, Any, Optional
 import logging
 
 from langchain_neo4j import Neo4jGraph, GraphCypherQAChain
@@ -36,6 +37,7 @@ class CVGraphRAGSystem:
         self.setup_neo4j()
         self.setup_qa_chain()
         self.load_example_queries()
+        self.chat_histories = {}  # Store conversation histories in memory
 
     def setup_neo4j(self):
         """Setup Neo4j connection."""
@@ -73,6 +75,7 @@ Use only the provided relationship types and properties in the schema.
 Do not use any other relationship types or properties that are not provided.
 For skill matching, always use case-insensitive comparison using toLower() function.
 For count queries, ensure you return meaningful column names.
+Use the provided Chat History to filter results if the question refers to previous context (e.g., "they", "those people").
 
 Schema:
 {schema}
@@ -99,10 +102,14 @@ WHERE toLower(s1.id) = toLower("Python") AND toLower(s2.id) = toLower("Django")
 RETURN p.id AS name
 
 The question is:
-{question}"""
+The question is:
+{question}
+
+Chat History (for context):
+{chat_history}"""
 
         CYPHER_GENERATION_PROMPT = PromptTemplate(
-            input_variables=["schema", "question"],
+            input_variables=["schema", "question", "chat_history"],
             template=CYPHER_GENERATION_TEMPLATE
         )
 
@@ -227,28 +234,50 @@ Helpful Answer:"""
             ]
         }
 
-    def query_graph(self, question: str) -> Dict[str, Any]:
+    def query_graph(self, question: str, conversation_id: str = None) -> Dict[str, Any]:
         """Execute a natural language query against the graph.
 
         Args:
             question: Natural language question
+            conversation_id: Optional ID to maintain conversation context
 
         Returns:
-            Dict containing query results and metadata
+            Dict containing query results, metadata, and conversation_id
         """
+        if not conversation_id:
+            # Stateless mode - do not use or store history
+            chat_history_str = "No history."
+        else:
+            # Initialize history for new conversation
+            if conversation_id not in self.chat_histories:
+                self.chat_histories[conversation_id] = []
+                
+            # Format history string (last 5 turns)
+            history_list = self.chat_histories[conversation_id][-5:]
+            chat_history_str = "\n".join([f"Human: {q}\nAI: {a}" for q, a in history_list]) if history_list else "No history."
+
         try:
             logger.info(f"Executing query: {question}")
 
             # Execute the query
-            result = self.qa_chain.invoke({"query": question})
+            result = self.qa_chain.invoke({
+                "query": question,
+                "chat_history": chat_history_str
+            })
 
             # Extract components
             response = {
                 "question": question,
                 "answer": result.get("result", "No answer generated"),
                 "cypher_query": result.get("intermediate_steps", [{}])[0].get("query", ""),
+                "cypher_query": result.get("intermediate_steps", [{}])[0].get("query", ""),
+                "conversation_id": conversation_id,
                 "success": True
             }
+            
+            # Update history with success only if conversation_id exists
+            if conversation_id:
+                self.chat_histories[conversation_id].append((question, response["answer"]))
 
             logger.info(f"✓ Query executed successfully")
             return response
@@ -259,6 +288,10 @@ Helpful Answer:"""
                 "question": question,
                 "answer": f"Error: {str(e)}",
                 "cypher_query": "",
+                "question": question,
+                "answer": f"Error: {str(e)}",
+                "cypher_query": "",
+                "conversation_id": conversation_id,
                 "success": False
             }
 

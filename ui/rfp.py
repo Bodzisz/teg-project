@@ -2,6 +2,7 @@ import streamlit as st
 import os
 import tempfile
 import shutil
+import time
 from langchain_neo4j import Neo4jGraph
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
@@ -22,6 +23,19 @@ def get_graph_connection():
     except Exception as e:
         st.error(f"Failed to connect to Neo4j: {e}")
         return None
+
+def delete_rfp(graph, rfp_id):
+    """Delete an RFP and its relationships from the database."""
+    query = """
+    MATCH (r:RFP {entity_id: $rfp_id})
+    DETACH DELETE r
+    """
+    try:
+        graph.query(query, {"rfp_id": rfp_id})
+        return True
+    except Exception as e:
+        st.error(f"Error deleting RFP: {e}")
+        return False
 
 def fetch_rfps(graph):
     """Fetch all RFP nodes with their details and requirements."""
@@ -234,5 +248,8 @@ def render_rfp():
         ## TODO: Implement matching candidates
         ac1.button("Find Matching Candidates", use_container_width=True, type="primary")
         
-        ## TODO: Implement complete RFP (this will remove RFP from db after candidates are assigned to projects)
-        ac2.button("Complete RFP", use_container_width=True, type="secondary")
+        if ac2.button("Complete RFP", use_container_width=True, type="secondary"):
+            if delete_rfp(graph, rfp.get('entity_id')):
+                st.toast(f"✅ RFP '{rfp.get('title')}' completed and removed.", icon="✅")
+                time.sleep(1) # Allow toast to appear
+                st.rerun()

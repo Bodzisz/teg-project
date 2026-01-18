@@ -329,6 +329,15 @@ class DataKnowledgeGraphBuilder:
             self.graph.query(fix_skill_query)
             logger.info("✓ Fixed Skill node properties (id → name)")
 
+            # For Skill nodes: Ensure id is populated from name if missing
+            fix_skill_id_query = """
+            MATCH (s:Skill)
+            WHERE s.id IS NULL AND s.name IS NOT NULL
+            SET s.id = s.name
+            """
+            self.graph.query(fix_skill_id_query)
+            logger.info("✓ Fixed Skill node properties (name → id)")
+
             # For Company nodes: copy 'id' to 'name' to ensure consistency
             fix_company_query = """
             MATCH (c:Company)

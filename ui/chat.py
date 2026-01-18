@@ -1,4 +1,5 @@
 import streamlit as st
+import uuid
 from query_knowledge_graph import CVGraphRAGSystem
 
 @st.cache_resource
@@ -26,7 +27,7 @@ def render_chat():
     with st.sidebar:
         if st.button("Start New Conversation", type="primary", use_container_width=True):
             st.session_state.messages = []
-            st.session_state.conversation_id = None
+            st.session_state.conversation_id = uuid.uuid4().hex
             st.rerun()
     
     # Initialize chat history
@@ -35,7 +36,7 @@ def render_chat():
 
     # Initialize conversation ID
     if "conversation_id" not in st.session_state:
-        st.session_state.conversation_id = None
+        st.session_state.conversation_id = uuid.uuid4().hex
 
     # Display chat messages from history on app rerun
     for message in st.session_state.messages:

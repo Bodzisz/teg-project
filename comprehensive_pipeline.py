@@ -98,21 +98,25 @@ class GraphPipeline:
                      projects_file = str(projects_json)
                      
                 logger.info(f"  Loading projects from: {projects_file}")
-                projects = self.assignment_loader.load_projects(projects_file)
                 
-                # Check current availability before assigning
-                logger.info("  Re-verifying programmer availability...")
-                programmers = self.assignment_loader.load_programmers_from_graph()
+                # Perform assignment based on RFP matches and project relationships
+                assignments_summary = self.assignment_loader.assign_candidates_to_projects(projects_file)
                 
-                # Fetch all pre-calculated matches
-                logger.info("  Fetching pre-calculated matches...")
-                all_matches = self.matching_engine.get_all_matches()
+                # Save assignments to Neo4j
+                self.assignment_loader.save_assignments_to_neo4j(assignments_summary)
                 
-                # Perform assignment based on matches and partial allocation logic
-                assignments = self.assignment_loader.assign_based_on_matches(all_matches, projects, programmers)
+                logger.info("✅ Assignments completed. Summary:")
+                for assignment in assignments_summary:
+                    logger.info(f"  - {assignment['person_name']} -> {assignment['project_title']} ({assignment['allocation_percentage']}%)")
                 
-                self.assignment_loader.save_to_neo4j(assignments)
-                logger.info("✅ Assignments saved to graph.")
+                # Validate by querying Neo4j for ASSIGNED_TO relationships
+                validate_query = """
+                MATCH (p:Person)-[a:ASSIGNED_TO]->(pr:Project)
+                RETURN p.name as person_name, pr.name as project_title, a.allocation_percentage as allocation_percentage
+                ORDER BY person_name, project_title
+                """
+                assigned_relationships = self.assignment_loader.graph.query(validate_query)
+                logger.info(f"✅ Validation: Found {len(assigned_relationships)} ASSIGNED_TO relationships in graph.")
             except Exception as e:
                 logger.error("❌ Error during programmer assignment: %s", e)
                 raise

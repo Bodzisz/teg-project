@@ -76,7 +76,7 @@ class MatchingEngine:
 
         return score
 
-    def rank_candidates(self, rfp_id: str, top_n: int = 10) -> List[Dict[str, Any]]:
+    def rank_candidates(self, rfp_id: str, top_n: int = 20) -> List[Dict[str, Any]]:
         """
         Ranks candidates for a specific RFP using Cypher for efficiency.
         Includes saving the MATCHED_TO relationship in the graph.
@@ -89,41 +89,41 @@ class MatchingEngine:
         WITH r
         MATCH (p:Person)
         
-        // Calculate Skill Score
-        OPTIONAL MATCH (r)-[:NEEDS]->(req_skill:Skill)
+        // Calculate Skill Score with mandatory weighting
+        OPTIONAL MATCH (r)-[needs:NEEDS]->(req_skill:Skill)
         OPTIONAL MATCH (p)-[hs:HAS_SKILL]->(p_skill:Skill)
-        WITH r, p, collect(req_skill.name) as required_skills, collect({name: p_skill.name, proficiency: hs.proficiency}) as person_skills
-        
+        WITH r, p, collect({name: req_skill.name, mandatory: needs.is_mandatory}) as required_skills, collect({name: p_skill.name, proficiency: hs.proficiency}) as person_skills
+
         WITH r, p, required_skills, person_skills,
-             reduce(s = 0.0, req in required_skills | 
-                s + CASE 
-                    WHEN req IN [ps IN person_skills | ps.name] THEN 
-                        10.0 + CASE toInteger([x IN person_skills WHERE x.name = req][0].proficiency)
-                            WHEN 5 THEN 8.0
-                            WHEN 4 THEN 5.0
-                            WHEN 3 THEN 3.0
-                            ELSE 1.0
-                        END
+            reduce(s = 0.0, req IN required_skills |
+                s + CASE
+                    WHEN req.name IN [ps IN person_skills | ps.name] THEN
+                        CASE WHEN req.mandatory THEN 20.0 ELSE 10.0 END
                     ELSE 0.0
                 END
-             ) as skill_score
-             
+            ) AS skill_score,
+            all(req IN required_skills WHERE (NOT req.mandatory) OR req.name IN [ps IN person_skills | ps.name]) AS mandatory_met
+
         // Experience and Availability Scores
         WITH r, p, skill_score,
-             toInteger(coalesce(p.years_experience, 0)) * 2.0 as exp_score,
-             coalesce(p.availability, 0) * 0.5 as avail_score
-             
-        // Total Score
-        WITH r, p, skill_score + exp_score + avail_score as total_score
+            toInteger(coalesce(p.years_experience, 0)) * 2.0 AS exp_score,
+            coalesce(p.availability, 0) * 0.5 AS avail_score,
+            mandatory_met
+
+        // Total Score with mandatory boost
+        WITH r, p, skill_score + exp_score + avail_score AS total_score, mandatory_met
         WHERE total_score > 0
-        
+
         // Persist the score
         MERGE (p)-[m:MATCHED_TO]->(r)
-        SET m.score = total_score, m.updated_at = datetime()
-        
-        RETURN p.name as person_id, total_score as score
+        SET m.score = total_score,
+            m.mandatory_met = mandatory_met,
+            m.updated_at = datetime()
+            
+        RETURN p.name AS person_id, total_score AS score, mandatory_met
         ORDER BY score DESC
         LIMIT $top_n
+
         """
         
         try:

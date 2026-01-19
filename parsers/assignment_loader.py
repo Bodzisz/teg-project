@@ -7,10 +7,11 @@ import yaml
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from pathlib import Path
-from typing import List
+from typing import List, Dict, Any
 from models.project_models import ProjectData, Requirement
 from models.programmer_models import ProgrammerData, Skill
 from langchain_neo4j import Neo4jGraph
+import random
 
 # Load environment variables
 load_dotenv(override=True)
@@ -389,6 +390,194 @@ class AssignmentLoader:
                     
         logger.info(f"✅ Generated {len(assignments)} assignments.")
         return assignments
+
+    def assign_candidates_to_projects(self, project_file: str) -> List[Dict[str, Any]]:
+        """
+        Assigns programmers to projects after ranking candidates for RFPs.
+        For each project, finds the related RFP via RELATED_TO relationship,
+        retrieves top-ranked candidates from MATCHED_TO, checks availability,
+        and creates ASSIGNED_TO relationships.
+        """
+        # Load projects
+        projects = self.load_projects(project_file)
+
+        # Ensure projects exist in graph
+        for project in projects:
+            self.graph.query("""
+            MERGE (p:Project {name: $name})
+            SET p.id = $id,
+                p.client = $client,
+                p.description = $description,
+                p.start_date = $start_date,
+                p.end_date = $end_date,
+                p.estimated_duration_months = $estimated_duration_months,
+                p.budget = $budget,
+                p.status = $status,
+                p.team_size = $team_size
+            """, {
+                "name": project.name,
+                "id": project.id,
+                "client": project.client,
+                "description": project.description,
+                "start_date": project.start_date,
+                "end_date": project.end_date,
+                "estimated_duration_months": project.estimated_duration_months,
+                "budget": project.budget,
+                "status": project.status,
+                "team_size": project.team_size
+            })
+
+        assignments = []
+
+        assignment_probability = self.config["assignment"].get("assignment_probability", 1.0)
+        logger.info(f"Using assignment_probability: {assignment_probability}")
+
+        for project in projects:
+            logger.info(f"Processing project: {project.name} (ID: {project.id})")
+
+            # Check assignment probability
+            if random.random() > assignment_probability:
+                logger.info(f"Project {project.id} skipped due to assignment_probability ({assignment_probability})")
+                continue
+
+            # Find related RFP by matching project id to RFP id (e.g., PRJ-001 -> RFP-001)
+            # If RELATED_TO relationship exists, use it; otherwise, match by id pattern
+            rfp_id = project.id.replace("PRJ-", "RFP-")
+            logger.info(f"Matching project {project.id} to RFP {rfp_id}")
+            
+            # Verify RFP exists
+            verify_query = """
+            MATCH (r:RFP {id: $rfp_id})
+            RETURN r.id as rfp_id, r.title as rfp_title
+            """
+            related_rfps = self.graph.query(verify_query, {"rfp_id": rfp_id})
+            
+            if not related_rfps:
+                # Fallback: try to find RFP by title similarity (simple contains check)
+                fallback_query = """
+                MATCH (r:RFP)
+                WHERE r.title CONTAINS $project_name OR $project_name CONTAINS r.title
+                RETURN r.id as rfp_id, r.title as rfp_title
+                LIMIT 1
+                """
+                fallback_rfps = self.graph.query(fallback_query, {"project_name": project.name})
+                if fallback_rfps:
+                    related_rfps = fallback_rfps
+                    rfp_id = related_rfps[0]["rfp_id"]
+                    logger.info(f"Found related RFP via fallback: {rfp_id} for project {project.id}")
+                else:
+                    logger.warning(f"No RFP found with id {rfp_id} or title match for project {project.id}")
+                    continue
+            
+            logger.info(f"Found related RFP: {rfp_id} for project {project.id}")
+
+            # Retrieve top-ranked candidates from MATCHED_TO for this RFP
+            match_query = """
+            MATCH (person:Person)-[m:MATCHED_TO]->(r:RFP {id: $rfp_id})
+            RETURN person.name as person_name, person.name as person_id, m.score as score
+            ORDER BY m.score DESC
+            """
+            candidates = self.graph.query(match_query, {"rfp_id": rfp_id})
+
+            if not candidates:
+                logger.warning(f"No matched candidates found for RFP {rfp_id} (project {project.id})")
+                continue
+
+            # Check programmer availability (avoid over-allocation)
+            available_candidates = []
+            for candidate in candidates:
+                person_id = candidate["person_id"]
+                availability = self.calculate_availability(person_id)
+                if availability > 0:
+                    available_candidates.append({
+                        "person_id": person_id,
+                        "person_name": candidate["person_name"],
+                        "score": candidate["score"],
+                        "availability": availability
+                    })
+                else:
+                    logger.info(f"Candidate {candidate['person_name']} excluded due to 0 availability")
+
+            if not available_candidates:
+            # Fallback: Assign top by experience if no matches
+                fallback_query = """
+                MATCH (p:Person)
+                WHERE p.availability > 10  // Relaxed threshold
+                RETURN p.name as person_name, p.years_experience as exp
+                ORDER BY exp DESC
+                LIMIT $team_size
+                """
+                fallbacks = self.graph.query(fallback_query, {"team_size": project.team_size})
+                for fb in fallbacks:
+                    logger.info(f"Fallback assigned {fb['person_name']} to {project.name} based on experience")
+                    assignments.append({
+                        "person_name": fb["person_name"],
+                        "project_title": project.name,
+                        "allocation_percentage": 100 // len(fallbacks),
+                        "start_date": str(project.start_date),
+                        "end_date": str(project.end_date) if project.end_date else None
+                    })
+
+            # Take top candidates up to team_size
+            top_candidates = available_candidates[:project.team_size]
+
+            if not top_candidates:
+                logger.warning(f"No top candidates selected for project {project.id} (team_size: {project.team_size})")
+                continue
+
+            # Calculate allocation percentages (evenly distribute based on team_size)
+            allocation_percentage = 100 // len(top_candidates)
+
+            for candidate in top_candidates:
+                logger.info(f"Assigned {candidate['person_name']} to {project.name} with {allocation_percentage}% allocation")
+
+                assignments.append({
+                    "person_name": candidate["person_name"],
+                    "project_title": project.name,
+                    "allocation_percentage": allocation_percentage,
+                    "start_date": str(project.start_date),
+                    "end_date": str(project.end_date) if project.end_date else None
+                })
+
+        logger.info(f"✅ Completed assignments for {len(projects)} projects, created {len(assignments)} assignments")
+        return assignments
+
+    def save_assignments_to_neo4j(self, assignments_summary: List[Dict[str, Any]]):
+        """
+        Saves the assignments to Neo4j by creating ASSIGNED_TO relationships.
+        """
+        try:
+            for assignment in assignments_summary:
+                person_name = assignment["person_name"]
+                project_title = assignment["project_title"]
+                allocation_percentage = assignment["allocation_percentage"]
+                start_date = assignment["start_date"]
+                end_date = assignment["end_date"]
+
+                # Cypher MERGE query
+                query = """
+                MATCH (p:Person {name: $person_name}), (pr:Project {name: $project_title})
+                MERGE (p)-[a:ASSIGNED_TO]->(pr)
+                SET a.allocation_percentage = $allocation_percentage,
+                    a.start_date = date($start_date)
+                """
+                params = {
+                    "person_name": person_name,
+                    "project_title": project_title,
+                    "allocation_percentage": allocation_percentage,
+                    "start_date": start_date
+                }
+                if end_date:
+                    query += ", a.end_date = date($end_date)"
+                    params["end_date"] = end_date
+
+                self.graph.query(query, params)
+                logger.info(f"✅ Created ASSIGNED_TO for {person_name} -> {project_title} ({allocation_percentage}%)")
+            
+            logger.info(f"✅ Saved {len(assignments_summary)} assignments to Neo4j.")
+        except Exception as e:
+            logger.error(f"❌ Error saving assignments to Neo4j: {e}")
+            raise
 
     def save_to_neo4j(self, assignments: List[dict]):
         """Save assignments to Neo4j."""

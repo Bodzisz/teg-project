@@ -144,6 +144,7 @@ class RFPParser:
             
             query = """
             CREATE (r:RFP {
+                id: $rfp_id,
                 entity_id: $rfp_id,
                 title: $title,
                 client: $client,
@@ -157,6 +158,7 @@ class RFPParser:
                 remote_allowed: $remote_allowed
             })
             CREATE (p:Project {
+                id: $project_id,
                 entity_id: $project_id,
                 name: $name,
                 client: $client,

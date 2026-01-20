@@ -76,6 +76,18 @@ class GraphPipeline:
             except Exception as e:
                 logger.error("❌ Error during candidate matching: %s", e)
 
+        # After matching, create Projects from approved RFPs
+        logger.info("🔍 Stage 3.5: Creating Projects from Approved RFPs...")
+        try:
+            rfps = self.matching_engine.graph.query("MATCH (r:RFP) RETURN r.id as id")
+            for rfp in rfps:
+                rfp_id = rfp["id"]
+                logger.info(f"  Creating Project from RFP: {rfp_id}")
+                self.rfp_parser.create_project_from_rfp(rfp_id)
+            logger.info("✅ Projects created from RFPs.")
+        except Exception as e:
+            logger.error("❌ Error creating Projects: %s", e)
+
         if assign_programmers:
             logger.info("🔍 Stage 4: Assigning programmers to Projects...")
             try:
@@ -87,20 +99,11 @@ class GraphPipeline:
                     self.assignment_loader.update_graph_with_availability(p.id, availability)
                 
                 # Then proceed with assignments
-                # Prefer loading projects from YAML/JSON file where requirements are explicitly defined
-                projects_dir = self.config.get("output", {}).get("projects_dir", "data/projects")
-                projects_yaml = Path(projects_dir) / "projects.yaml"
-                projects_json = Path(projects_dir) / "projects.json"
-                
-                if projects_yaml.exists():
-                     projects_file = str(projects_yaml)
-                else:
-                     projects_file = str(projects_json)
-                     
-                logger.info(f"  Loading projects from: {projects_file}")
+                # Load projects from graph and perform assignment based on RFP matches and project relationships
+                logger.info("  Loading projects from graph...")
                 
                 # Perform assignment based on RFP matches and project relationships
-                assignments_summary = self.assignment_loader.assign_candidates_to_projects(projects_file)
+                assignments_summary = self.assignment_loader.assign_candidates_to_projects()
                 
                 # Save assignments to Neo4j
                 self.assignment_loader.save_assignments_to_neo4j(assignments_summary)

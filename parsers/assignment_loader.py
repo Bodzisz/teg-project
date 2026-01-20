@@ -391,42 +391,14 @@ class AssignmentLoader:
         logger.info(f"✅ Generated {len(assignments)} assignments.")
         return assignments
 
-    def assign_candidates_to_projects(self, project_file: str) -> List[Dict[str, Any]]:
+    def assign_candidates_to_projects(self) -> List[Dict[str, Any]]:
         """
-        Assigns programmers to projects after ranking candidates for RFPs.
-        For each project, finds the related RFP via RELATED_TO relationship,
-        retrieves top-ranked candidates from MATCHED_TO, checks availability,
-        and creates ASSIGNED_TO relationships.
+        Assigns programmers to projects based on RFP matches.
+        For each project, finds the originating RFP, retrieves MATCHED_TO candidates,
+        checks availability, and creates ASSIGNED_TO relationships with dynamic allocation.
         """
-        # Load projects
-        projects = self.load_projects(project_file)
-
-        # Ensure projects exist in graph
-        for project in projects:
-            self.graph.query("""
-            MERGE (p:Project {name: $name})
-            SET p.id = $id,
-                p.client = $client,
-                p.description = $description,
-                p.start_date = $start_date,
-                p.end_date = $end_date,
-                p.estimated_duration_months = $estimated_duration_months,
-                p.budget = $budget,
-                p.status = $status,
-                p.team_size = $team_size
-            """, {
-                "name": project.name,
-                "id": project.id,
-                "client": project.client,
-                "description": project.description,
-                "start_date": project.start_date,
-                "end_date": project.end_date,
-                "estimated_duration_months": project.estimated_duration_months,
-                "budget": project.budget,
-                "status": project.status,
-                "team_size": project.team_size
-            })
-
+        # Load projects from graph
+        projects = self.load_projects_from_graph()
         assignments = []
 
         assignment_probability = self.config["assignment"].get("assignment_probability", 1.0)
@@ -440,41 +412,22 @@ class AssignmentLoader:
                 logger.info(f"Project {project.id} skipped due to assignment_probability ({assignment_probability})")
                 continue
 
-            # Find related RFP by matching project id to RFP id (e.g., PRJ-001 -> RFP-001)
-            # If RELATED_TO relationship exists, use it; otherwise, match by id pattern
-            rfp_id = project.id.replace("PRJ-", "RFP-")
-            logger.info(f"Matching project {project.id} to RFP {rfp_id}")
-            
-            # Verify RFP exists
-            verify_query = """
-            MATCH (r:RFP {id: $rfp_id})
+            # Find the RFP that generated this project
+            rfp_query = """
+            MATCH (r:RFP)-[:GENERATES]->(p:Project {id: $project_id})
             RETURN r.id as rfp_id, r.title as rfp_title
             """
-            related_rfps = self.graph.query(verify_query, {"rfp_id": rfp_id})
-            
-            if not related_rfps:
-                # Fallback: try to find RFP by title similarity (simple contains check)
-                fallback_query = """
-                MATCH (r:RFP)
-                WHERE r.title CONTAINS $project_name OR $project_name CONTAINS r.title
-                RETURN r.id as rfp_id, r.title as rfp_title
-                LIMIT 1
-                """
-                fallback_rfps = self.graph.query(fallback_query, {"project_name": project.name})
-                if fallback_rfps:
-                    related_rfps = fallback_rfps
-                    rfp_id = related_rfps[0]["rfp_id"]
-                    logger.info(f"Found related RFP via fallback: {rfp_id} for project {project.id}")
-                else:
-                    logger.warning(f"No RFP found with id {rfp_id} or title match for project {project.id}")
-                    continue
-            
-            logger.info(f"Found related RFP: {rfp_id} for project {project.id}")
+            rfp_result = self.graph.query(rfp_query, {"project_id": project.id})
+            if not rfp_result:
+                logger.warning(f"No originating RFP found for project {project.id}")
+                continue
+            rfp_id = rfp_result[0]["rfp_id"]
+            logger.info(f"Found originating RFP: {rfp_id} for project {project.id}")
 
             # Retrieve top-ranked candidates from MATCHED_TO for this RFP
             match_query = """
             MATCH (person:Person)-[m:MATCHED_TO]->(r:RFP {id: $rfp_id})
-            RETURN person.name as person_name, person.name as person_id, m.score as score
+            RETURN person.name as person_name, person.name as person_id, m.score as score, m.mandatory_met as mandatory_met
             ORDER BY m.score DESC
             """
             candidates = self.graph.query(match_query, {"rfp_id": rfp_id})
@@ -483,40 +436,31 @@ class AssignmentLoader:
                 logger.warning(f"No matched candidates found for RFP {rfp_id} (project {project.id})")
                 continue
 
-            # Check programmer availability (avoid over-allocation)
+            # Check programmer availability (relaxed threshold)
             available_candidates = []
             for candidate in candidates:
                 person_id = candidate["person_id"]
                 availability = self.calculate_availability(person_id)
-                if availability > 0:
+                if availability > 10:  # Relaxed threshold
                     available_candidates.append({
                         "person_id": person_id,
                         "person_name": candidate["person_name"],
                         "score": candidate["score"],
+                        "mandatory_met": candidate.get("mandatory_met", False),
                         "availability": availability
                     })
                 else:
-                    logger.info(f"Candidate {candidate['person_name']} excluded due to 0 availability")
+                    logger.info(f"Candidate {candidate['person_name']} excluded due to low availability ({availability}%)")
 
             if not available_candidates:
-            # Fallback: Assign top by experience if no matches
-                fallback_query = """
-                MATCH (p:Person)
-                WHERE p.availability > 10  // Relaxed threshold
-                RETURN p.name as person_name, p.years_experience as exp
-                ORDER BY exp DESC
-                LIMIT $team_size
-                """
-                fallbacks = self.graph.query(fallback_query, {"team_size": project.team_size})
-                for fb in fallbacks:
-                    logger.info(f"Fallback assigned {fb['person_name']} to {project.name} based on experience")
-                    assignments.append({
-                        "person_name": fb["person_name"],
-                        "project_title": project.name,
-                        "allocation_percentage": 100 // len(fallbacks),
-                        "start_date": str(project.start_date),
-                        "end_date": str(project.end_date) if project.end_date else None
-                    })
+                logger.warning(f"No available candidates for project {project.id} (RFP {rfp_id})")
+                continue
+
+            # Prioritize candidates who met mandatory requirements
+            mandatory_candidates = [c for c in available_candidates if c["mandatory_met"]]
+            if mandatory_candidates:
+                available_candidates = mandatory_candidates
+                logger.info(f"Prioritizing {len(mandatory_candidates)} candidates who met mandatory requirements for project {project.id}")
 
             # Take top candidates up to team_size
             top_candidates = available_candidates[:project.team_size]
@@ -525,19 +469,27 @@ class AssignmentLoader:
                 logger.warning(f"No top candidates selected for project {project.id} (team_size: {project.team_size})")
                 continue
 
-            # Calculate allocation percentages (evenly distribute based on team_size)
-            allocation_percentage = 100 // len(top_candidates)
-
+            # Distribute allocation dynamically based on availability
+            total_available = sum(c["availability"] for c in top_candidates)
             for candidate in top_candidates:
-                logger.info(f"Assigned {candidate['person_name']} to {project.name} with {allocation_percentage}% allocation")
+                if total_available > 0:
+                    allocation_percentage = min(candidate["availability"], (candidate["availability"] / total_available) * 100)
+                else:
+                    allocation_percentage = 100 // len(top_candidates)
+
+                logger.info(f"Assigned {candidate['person_name']} to {project.name} with {allocation_percentage:.1f}% allocation")
 
                 assignments.append({
                     "person_name": candidate["person_name"],
                     "project_title": project.name,
-                    "allocation_percentage": allocation_percentage,
+                    "allocation_percentage": round(allocation_percentage, 1),
                     "start_date": str(project.start_date),
                     "end_date": str(project.end_date) if project.end_date else None
                 })
+
+                # Update availability in real-time
+                new_availability = candidate["availability"] - allocation_percentage
+                self.update_graph_with_availability(candidate["person_id"], max(0, int(new_availability)))
 
         logger.info(f"✅ Completed assignments for {len(projects)} projects, created {len(assignments)} assignments")
         return assignments
@@ -556,7 +508,8 @@ class AssignmentLoader:
 
                 # Cypher MERGE query
                 query = """
-                MATCH (p:Person {name: $person_name}), (pr:Project {name: $project_title})
+                MATCH (p:Person {name: $person_name})
+                MATCH (pr:Project {name: $project_title})
                 MERGE (p)-[a:ASSIGNED_TO]->(pr)
                 SET a.allocation_percentage = $allocation_percentage,
                     a.start_date = date($start_date)

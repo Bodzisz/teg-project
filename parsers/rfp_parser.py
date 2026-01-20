@@ -136,12 +136,8 @@ class RFPParser:
 
     
     def save_to_neo4j(self, rfp_data: RFPData):
-        """Save RFP data and create corresponding Project node to Neo4j."""
-        from datetime import timedelta
+        """Save RFP data to Neo4j. Project creation will be handled separately after approval."""
         try:
-            # Calculate end_date for project
-            end_date = rfp_data.start_date + timedelta(days=rfp_data.duration_months * 30)
-            
             query = """
             CREATE (r:RFP {
                 id: $rfp_id,
@@ -157,6 +153,63 @@ class RFPParser:
                 location: $location,
                 remote_allowed: $remote_allowed
             })
+            WITH r
+            UNWIND $requirements AS req
+            MERGE (s:Skill {entity_id: req.skill_name, name: req.skill_name})
+            MERGE (r)-[:NEEDS {
+                min_proficiency: req.min_proficiency,
+                is_mandatory: req.is_mandatory,
+                preferred_certifications: req.preferred_certifications
+            }]->(s)
+            """
+            self.graph.query(query, {
+                "rfp_id": rfp_data.id,
+                "title": rfp_data.title,
+                "client": rfp_data.client,
+                "description": rfp_data.description,
+                "project_type": rfp_data.project_type,
+                "duration_months": rfp_data.duration_months,
+                "team_size": rfp_data.team_size,
+                "budget_range": rfp_data.budget_range,
+                "start_date": str(rfp_data.start_date),
+                "location": rfp_data.location,
+                "remote_allowed": rfp_data.remote_allowed,
+                "requirements": [req.model_dump() for req in rfp_data.requirements]
+            })
+            logger.info(f"✅ RFP {rfp_data.id} saved to Neo4j.")
+        except Exception as e:
+            logger.error("❌ Failed to save RFP to Neo4j: %s", e)
+
+    def create_project_from_rfp(self, rfp_id: str):
+        """Convert an approved RFP into a Project node."""
+        from datetime import timedelta
+        try:
+            # Check if Project already exists
+            check_query = "MATCH (p:Project {id: $project_id}) RETURN p"
+            existing = self.graph.query(check_query, {"project_id": f"PRJ-{rfp_id}"})
+            if existing:
+                logger.info(f"Project PRJ-{rfp_id} already exists.")
+                return
+
+            # Get RFP data
+            rfp_query = """
+            MATCH (r:RFP {id: $rfp_id})
+            OPTIONAL MATCH (r)-[needs:NEEDS]->(s:Skill)
+            RETURN r, collect({skill: s.name, min_proficiency: needs.min_proficiency, is_mandatory: needs.is_mandatory, preferred_certifications: needs.preferred_certifications}) as requirements
+            """
+            result = self.graph.query(rfp_query, {"rfp_id": rfp_id})
+            if not result:
+                logger.warning(f"RFP {rfp_id} not found.")
+                return
+            rfp = result[0]["r"]
+            requirements = result[0]["requirements"]
+
+            # Calculate end_date
+            start_date = datetime.fromisoformat(rfp["start_date"])
+            end_date = start_date + timedelta(days=rfp["duration_months"] * 30)
+
+            # Create Project
+            project_query = """
             CREATE (p:Project {
                 id: $project_id,
                 entity_id: $project_id,
@@ -166,45 +219,38 @@ class RFPParser:
                 start_date: $start_date,
                 end_date: $end_date,
                 estimated_duration_months: $duration_months,
-                budget: $budget_range,
+                budget: $budget,
                 status: "planned",
                 team_size: $team_size
             })
+            WITH p
+            MATCH (r:RFP {id: $rfp_id})
             CREATE (r)-[:GENERATES]->(p)
-            WITH r, p
+            WITH p
             UNWIND $requirements AS req
-            MERGE (s:Skill {entity_id: req.skill_name, name: req.skill_name})
-            MERGE (r)-[:NEEDS {
-                min_proficiency: req.min_proficiency,
-                is_mandatory: req.is_mandatory,
-                preferred_certifications: req.preferred_certifications
-            }]->(s)
+            MERGE (s:Skill {name: req.skill})
             MERGE (p)-[:REQUIRES {
                 min_proficiency: req.min_proficiency,
                 is_mandatory: req.is_mandatory,
                 preferred_certifications: req.preferred_certifications
             }]->(s)
             """
-            self.graph.query(query, {
-                "rfp_id": rfp_data.id,
-                "project_id": f"PRJ-{rfp_data.id}",
-                "title": rfp_data.title,
-                "name": rfp_data.title,
-                "client": rfp_data.client,
-                "description": rfp_data.description,
-                "project_type": rfp_data.project_type,
-                "duration_months": rfp_data.duration_months,
-                "team_size": rfp_data.team_size,
-                "budget_range": rfp_data.budget_range,
-                "start_date": str(rfp_data.start_date),
-                "end_date": str(end_date),
-                "location": rfp_data.location,
-                "remote_allowed": rfp_data.remote_allowed,
-                "requirements": [req.model_dump() for req in rfp_data.requirements]
+            self.graph.query(project_query, {
+                "project_id": f"PRJ-{rfp_id}",
+                "name": rfp["title"],
+                "client": rfp["client"],
+                "description": rfp["description"],
+                "start_date": rfp["start_date"],
+                "end_date": str(end_date.date()),
+                "duration_months": rfp["duration_months"],
+                "budget": rfp["budget_range"],
+                "team_size": rfp["team_size"],
+                "rfp_id": rfp_id,
+                "requirements": requirements
             })
-            logger.info(f"✅ RFP {rfp_data.id} and Project PRJ-{rfp_data.id} saved to Neo4j.")
+            logger.info(f"✅ Project PRJ-{rfp_id} created from RFP {rfp_id}.")
         except Exception as e:
-            logger.error("❌ Failed to save RFP and Project to Neo4j: %s", e)
+            logger.error("❌ Failed to create Project from RFP: %s", e)
 
 
 

@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import List, Optional, Union
 from datetime import date
 
 class Requirement(BaseModel):
@@ -10,8 +10,9 @@ class Requirement(BaseModel):
 class Assignment(BaseModel):
     programmer_name: str
     programmer_id: int
-    assignment_start_date: str
-    assignment_end_date: str
+    assignment_start_date: Optional[str] = None
+    assignment_end_date: Optional[str] = None
+    allocation_percentage: int = Field(100, description="Procent alokacji w projekcie")
 
 class ProjectData(BaseModel):
     id: str = Field(..., description="Unikalny identyfikator projektu")
@@ -21,7 +22,7 @@ class ProjectData(BaseModel):
     start_date: date = Field(..., description="Data rozpoczęcia")
     end_date: Optional[date] = Field(None, description="Data zakończenia (opcjonalna)")
     estimated_duration_months: int = Field(..., description="Szacowany czas trwania w miesiącach")
-    budget: Optional[str] = Field(None, description="Budżet projektu")
+    budget: Optional[Union[str, int]] = Field(None, description="Budżet projektu")
     status: str = Field(..., description="Status projektu: completed, active, planned, on_hold")
     team_size: int = Field(..., description="Rozmiar zespołu")
     requirements: List[Requirement] = Field(..., description="Lista wymagań projektowych")

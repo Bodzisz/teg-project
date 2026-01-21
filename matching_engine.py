@@ -86,13 +86,16 @@ class MatchingEngine:
         query = """
         MATCH (r:RFP)
         WHERE r.id = $rfp_id OR r.title = $rfp_id
-        WITH r
-        MATCH (p:Person)
+        WITH r LIMIT 1
         
-        // Calculate Skill Score with mandatory weighting
+        // Collect requirements first
         OPTIONAL MATCH (r)-[needs:NEEDS]->(req_skill:Skill)
+        WITH r, collect({name: req_skill.name, mandatory: needs.is_mandatory}) as required_skills
+        
+        // Then match persons and their skills
+        MATCH (p:Person)
         OPTIONAL MATCH (p)-[hs:HAS_SKILL]->(p_skill:Skill)
-        WITH r, p, collect({name: req_skill.name, mandatory: needs.is_mandatory}) as required_skills, collect({name: p_skill.name, proficiency: hs.proficiency}) as person_skills
+        WITH r, required_skills, p, collect({name: p_skill.name, proficiency: hs.proficiency}) as person_skills
 
         WITH r, p, required_skills, person_skills,
             reduce(s = 0.0, req IN required_skills |
@@ -105,13 +108,13 @@ class MatchingEngine:
             all(req IN required_skills WHERE (NOT req.mandatory) OR req.name IN [ps IN person_skills | ps.name]) AS mandatory_met
 
         // Experience and Availability Scores
-        WITH r, p, skill_score,
+        WITH r, p, skill_score, person_skills,
             toInteger(coalesce(p.years_experience, 0)) * 2.0 AS exp_score,
             coalesce(p.availability, 0) * 0.5 AS avail_score,
             mandatory_met
 
         // Total Score with mandatory boost
-        WITH r, p, skill_score + exp_score + avail_score AS total_score, mandatory_met
+        WITH r, p, skill_score + exp_score + avail_score AS total_score, mandatory_met, person_skills
         WHERE total_score > 0
 
         // Persist the score
@@ -120,7 +123,10 @@ class MatchingEngine:
             m.mandatory_met = mandatory_met,
             m.updated_at = datetime()
             
-        RETURN p.name AS person_id, total_score AS score, mandatory_met
+        RETURN p.name AS person_id, total_score AS score, mandatory_met,
+               p.location as location, p.email as email, p.description as description, 
+               p.years_experience as years_experience, p.availability as availability,
+               person_skills as skills
         ORDER BY score DESC
         LIMIT $top_n
 

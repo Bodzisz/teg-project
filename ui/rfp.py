@@ -277,10 +277,32 @@ def render_rfp():
                     # The engine returns p.name as person_id which should be the full name
                     person_name = match.get('person_id', 'Unknown') 
                     
-                    with st.expander(f"👤 {person_name}"):
-                        c_score, c_mandatory = st.columns(2)
-                        c_score.metric("Match Score", f"{score:.1f}")
-                        c_mandatory.markdown(f"**Mandatory Met:** {'✅ Yes' if match.get('mandatory_met') else '❌ No'}")
+                    # Format header
+                    mandatory_icon = "✅" if match.get('mandatory_met') else "⚠️"
+                    header_text = f"👤 {person_name} | 🏆 Score: {score:.1f} | {mandatory_icon}"
+                    
+                    with st.expander(header_text):
+                        # Layout columns for details
+                        dc1, dc2 = st.columns(2)
+                        
+                        dc1.markdown(f"**📍 Location:** {match.get('location', 'N/A')}")
+                        dc1.markdown(f"**📧 Email:** {match.get('email', 'N/A')}")
+                        dc1.markdown(f"**📅 Experience:** {match.get('years_experience', 0)} years")
+                        
+                        avail = match.get('availability', 0)
+                        dc2.metric("Availability", f"{avail}%")
+                        
+                        st.markdown("**📝 Bio:**")
+                        st.write(match.get('description') or "No description available.")
+                        
+                        if match.get('skills'):
+                            st.markdown("**🛠 Skills:**")
+                            skills_html = ""
+                            for s in match.get('skills', []):
+                                skills_html += f"<span style='background-color: #333; padding: 4px 8px; border-radius: 4px; margin-right: 5px; font-size: 0.8em;'>{s['name']} ({s.get('proficiency', 'N/A')})</span>"
+                            st.markdown(skills_html, unsafe_allow_html=True)
+                        else:
+                            st.info("No skills listed.")
             else:
                 st.info("No matching candidates found.")
         

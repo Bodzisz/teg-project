@@ -194,6 +194,13 @@ def render_rfp():
     if selected_option:
         data = rfp_options[selected_option]
         rfp = data['r']
+        
+        # Reset matches if RFP changed
+        if st.session_state.get('last_viewed_rfp_id') != rfp.get('entity_id'):
+            st.session_state['current_matches'] = []
+            st.session_state['match_rfp_id'] = None
+            st.session_state['last_viewed_rfp_id'] = rfp.get('entity_id')
+
         requirements = data['requirements']
         
         # Sort requirements: Mandatory first
@@ -246,8 +253,36 @@ def render_rfp():
         st.markdown("### 🚀 Actions")
         ac1, ac2 = st.columns(2)
 
-        ## TODO: Implement matching candidates
-        ac1.button("Find Matching Candidates", use_container_width=True, type="primary")
+        if ac1.button("Find Matching Candidates", use_container_width=True, type="primary"):
+            with st.spinner("Finding best matches..."):
+                try:
+                    # Initialize engine (assumes matching_engine.py is in python path)
+                    from matching_engine import MatchingEngine
+                    engine = MatchingEngine()
+                    # Use entity_id preferably, fallback to title
+                    lookup_id = rfp.get('entity_id') or rfp.get('title')
+                    matches = engine.rank_candidates(lookup_id, top_n=10)
+                    st.session_state['current_matches'] = matches
+                    st.session_state['match_rfp_id'] = rfp.get('entity_id')
+                except Exception as e:
+                    st.error(f"Error finding matches: {e}")
+
+        # Display matches if they exist for the current RFP
+        if st.session_state.get('match_rfp_id') == rfp.get('entity_id') and 'current_matches' in st.session_state:
+            st.markdown("### 🏆 Top Candidates")
+            matches = st.session_state['current_matches']
+            if matches:
+                for match in matches:
+                    score = match.get('score', 0)
+                    # The engine returns p.name as person_id which should be the full name
+                    person_name = match.get('person_id', 'Unknown') 
+                    
+                    with st.expander(f"👤 {person_name}"):
+                        c_score, c_mandatory = st.columns(2)
+                        c_score.metric("Match Score", f"{score:.1f}")
+                        c_mandatory.markdown(f"**Mandatory Met:** {'✅ Yes' if match.get('mandatory_met') else '❌ No'}")
+            else:
+                st.info("No matching candidates found.")
         
         if ac2.button("Complete RFP", use_container_width=True, type="secondary"):
             if delete_rfp(graph, rfp.get('entity_id')):

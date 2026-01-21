@@ -297,9 +297,17 @@ def render_rfp():
                         
                         if match.get('skills'):
                             st.markdown("**🛠 Skills:**")
+                            # Create a set of required skills for fast lookup
+                            required_skill_names = {req.get('skill') for req in requirements if req.get('skill')}
+
                             skills_html = ""
                             for s in match.get('skills', []):
-                                skills_html += f"<span style='background-color: #333; padding: 4px 8px; border-radius: 4px; margin-right: 5px; font-size: 0.8em;'>{s['name']} ({s.get('proficiency', 'N/A')})</span>"
+                                skill_name = s['name']
+                                is_match = skill_name in required_skill_names
+                                # Green for match (#2e7d32), default dark grey (#333) otherwise
+                                bg_color = "#2e7d32" if is_match else "#333"
+                                
+                                skills_html += f"<span style='background-color: {bg_color}; padding: 4px 8px; border-radius: 4px; margin-right: 5px; font-size: 0.8em;'>{skill_name} ({s.get('proficiency', 'N/A')})</span>"
                             st.markdown(skills_html, unsafe_allow_html=True)
                         else:
                             st.info("No skills listed.")

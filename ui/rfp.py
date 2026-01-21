@@ -130,15 +130,16 @@ def process_uploaded_files(uploaded_files):
         
     return success_count > 0
 
-# Initialize session state for uploader key and success flag
-if "rfp_uploader_key" not in st.session_state:
-    st.session_state["rfp_uploader_key"] = 0
 
-if "rfp_upload_success" not in st.session_state:
-    st.session_state["rfp_upload_success"] = False
 
 def render_rfp():
     """Render the RFP Explorer UI."""
+    # Initialize session state for uploader key and success flag
+    if "rfp_uploader_key" not in st.session_state:
+        st.session_state["rfp_uploader_key"] = 0
+
+    if "rfp_upload_success" not in st.session_state:
+        st.session_state["rfp_upload_success"] = False
     st.header("📂 RFP Explorer")
     st.markdown("Browse and analyze available Request for Proposals.")
 

@@ -194,6 +194,13 @@ def render_rfp():
     if selected_option:
         data = rfp_options[selected_option]
         rfp = data['r']
+        
+        # Reset matches if RFP changed
+        if st.session_state.get('last_viewed_rfp_id') != rfp.get('entity_id'):
+            st.session_state['current_matches'] = []
+            st.session_state['match_rfp_id'] = None
+            st.session_state['last_viewed_rfp_id'] = rfp.get('entity_id')
+
         requirements = data['requirements']
         
         # Sort requirements: Mandatory first
@@ -246,8 +253,66 @@ def render_rfp():
         st.markdown("### 🚀 Actions")
         ac1, ac2 = st.columns(2)
 
-        ## TODO: Implement matching candidates
-        ac1.button("Find Matching Candidates", use_container_width=True, type="primary")
+        if ac1.button("Find Matching Candidates", use_container_width=True, type="primary"):
+            with st.spinner("Finding best matches..."):
+                try:
+                    # Initialize engine (assumes matching_engine.py is in python path)
+                    from matching_engine import MatchingEngine
+                    engine = MatchingEngine()
+                    # Use entity_id preferably, fallback to title
+                    lookup_id = rfp.get('entity_id') or rfp.get('title')
+                    matches = engine.rank_candidates(lookup_id, top_n=10)
+                    st.session_state['current_matches'] = matches
+                    st.session_state['match_rfp_id'] = rfp.get('entity_id')
+                except Exception as e:
+                    st.error(f"Error finding matches: {e}")
+
+        # Display matches if they exist for the current RFP
+        if st.session_state.get('match_rfp_id') == rfp.get('entity_id') and 'current_matches' in st.session_state:
+            st.markdown("### 🏆 Top Candidates")
+            matches = st.session_state['current_matches']
+            if matches:
+                for match in matches:
+                    score = match.get('score', 0)
+                    # The engine returns p.name as person_id which should be the full name
+                    person_name = match.get('person_id', 'Unknown') 
+                    
+                    # Format header
+                    mandatory_icon = "✅" if match.get('mandatory_met') else "⚠️"
+                    header_text = f"👤 {person_name} | 🏆 Score: {score:.1f} | {mandatory_icon}"
+                    
+                    with st.expander(header_text):
+                        # Layout columns for details
+                        dc1, dc2 = st.columns(2)
+                        
+                        dc1.markdown(f"**📍 Location:** {match.get('location', 'N/A')}")
+                        dc1.markdown(f"**📧 Email:** {match.get('email', 'N/A')}")
+                        dc1.markdown(f"**📅 Experience:** {match.get('years_experience', 0)} years")
+                        
+                        avail = match.get('availability', 0)
+                        dc2.metric("Availability", f"{avail}%")
+                        
+                        st.markdown("**📝 Bio:**")
+                        st.write(match.get('description') or "No description available.")
+                        
+                        if match.get('skills'):
+                            st.markdown("**🛠 Skills:**")
+                            # Create a set of required skills for fast lookup
+                            required_skill_names = {req.get('skill') for req in requirements if req.get('skill')}
+
+                            skills_html = ""
+                            for s in match.get('skills', []):
+                                skill_name = s['name']
+                                is_match = skill_name in required_skill_names
+                                # Green for match (#2e7d32), default dark grey (#333) otherwise
+                                bg_color = "#2e7d32" if is_match else "#333"
+                                
+                                skills_html += f"<span style='background-color: {bg_color}; padding: 4px 8px; border-radius: 4px; margin-right: 5px; font-size: 0.8em;'>{skill_name} ({s.get('proficiency', 'N/A')})</span>"
+                            st.markdown(skills_html, unsafe_allow_html=True)
+                        else:
+                            st.info("No skills listed.")
+            else:
+                st.info("No matching candidates found.")
         
         if ac2.button("Complete RFP", use_container_width=True, type="secondary"):
             if delete_rfp(graph, rfp.get('entity_id')):

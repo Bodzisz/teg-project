@@ -5,6 +5,7 @@ import logging
 import os
 from pathlib import Path
 import tomllib  # For Python 3.11+, use 'toml' for older versions
+import uuid
 
 from langchain_neo4j import Neo4jGraph
 from langchain_openai import ChatOpenAI
@@ -163,7 +164,7 @@ class RFPParser:
             }]->(s)
             """
             self.graph.query(query, {
-                "rfp_id": rfp_data.id,
+                "rfp_id": uuid.uuid4().hex,
                 "title": rfp_data.title,
                 "client": rfp_data.client,
                 "description": rfp_data.description,

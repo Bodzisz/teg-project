@@ -1,6 +1,7 @@
 import streamlit as st
 from ui.chat import render_chat
 from ui.rfp import render_rfp
+from ui.candidates import render_candidates
 
 # Set page config
 st.set_page_config(
@@ -40,7 +41,7 @@ st.title("🤖 Elite Match AI")
 # Sidebar
 with st.sidebar:
     st.header("Navigation")
-    page = st.radio("", ["Chat", "RFPs"])
+    page = st.radio("", ["Chat", "RFPs", "Candidates"])
     st.markdown("---")
     st.markdown("### About")
     st.info("This AI assistant helps you query the CV Knowledge Graph to find the best candidates.")
@@ -49,3 +50,5 @@ if page == "Chat":
     render_chat()
 elif page == "RFPs":
     render_rfp()
+elif page == "Candidates":
+    render_candidates()

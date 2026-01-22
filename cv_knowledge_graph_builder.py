@@ -377,8 +377,7 @@ class DataKnowledgeGraphBuilder:
             "CREATE INDEX project_name IF NOT EXISTS FOR (pr:Project) ON (pr.name)",
             "CREATE INDEX certification_name IF NOT EXISTS FOR (cert:Certification) ON (cert.name)",
             "CREATE INDEX university_name IF NOT EXISTS FOR (u:University) ON (u.name)",
-            "CREATE INDEX rfp_title IF NOT EXISTS FOR (r:RFP) ON (r.title)",
-            "CREATE INDEX entity_base IF NOT EXISTS FOR (e:__Entity__) ON (e.id)"
+            "CREATE INDEX rfp_title IF NOT EXISTS FOR (r:RFP) ON (r.title)"
         ]
 
         for index_query in indexes:

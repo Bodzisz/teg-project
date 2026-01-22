@@ -4,7 +4,7 @@ import tempfile
 import asyncio
 from langchain_neo4j import Neo4jGraph
 from dotenv import load_dotenv
-from cv_knowledge_graph_builder import DataKnowledgeGraphBuilder
+from save_data_proxy import SaveDataProxy
 
 # Load environment variables
 load_dotenv(override=True)
@@ -45,7 +45,7 @@ def process_uploaded_cvs(uploaded_files):
     if not uploaded_files:
         return
 
-    builder = DataKnowledgeGraphBuilder(clear_graph=False) # Don't clear existing data
+    save_proxy = SaveDataProxy()
     
     progress_bar = st.progress(0)
     status_text = st.empty()
@@ -67,13 +67,10 @@ def process_uploaded_cvs(uploaded_files):
 
                 # Convert CV to graph (async wrapper)
                 # Since Streamlit is sync, we run the async method here
-                graph_documents = asyncio.run(builder.convert_cv_to_graph(file_path))
-                
-                if graph_documents:
-                   builder.store_graph_documents(graph_documents)
+                if asyncio.run(save_proxy.save_cv(file_path)):
                    success_count += 1
                 else:
-                     errors.append(f"{uploaded_file.name}: Failed to extract graph data.")
+                     errors.append(f"{uploaded_file.name}: Failed to save data.")
 
             except Exception as e:
                 errors.append(f"{uploaded_file.name}: {str(e)}")

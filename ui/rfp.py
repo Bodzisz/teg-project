@@ -7,6 +7,7 @@ from langchain_neo4j import Neo4jGraph
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from parsers.rfp_parser import RFPParser
+from save_data_proxy import SaveDataProxy
 
 # Load environment variables
 load_dotenv(override=True)
@@ -79,7 +80,7 @@ def process_uploaded_files(uploaded_files):
         st.error(f"⚠️ Limit exceeded: You uploaded {len(uploaded_files)} files. Please upload a maximum of 10 files.")
         return
 
-    rfp_parser = RFPParser()
+    save_proxy = SaveDataProxy()
     progress_bar = st.progress(0)
     status_text = st.empty()
 
@@ -98,17 +99,11 @@ def process_uploaded_files(uploaded_files):
                 with open(file_path, "wb") as f:
                     f.write(uploaded_file.getbuffer())
 
-                # Extract text
-                text = rfp_parser.extract_text_from_pdf(file_path)
-                if not text:
-                    errors.append(f"{uploaded_file.name}: No text extracted.")
-                    continue
-
-                # Parse and Save
-                rfp_data = rfp_parser.parse_rfp(text)
-                rfp_parser.save_to_neo4j(rfp_data)
-                
-                success_count += 1
+                # Use proxy to save to both systems
+                if save_proxy.save_rfp(file_path):
+                    success_count += 1
+                else:
+                    errors.append(f"{uploaded_file.name}: Failed to process/save.")
             
             except Exception as e:
                 errors.append(f"{uploaded_file.name}: {str(e)}")

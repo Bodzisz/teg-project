@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from parsers.rfp_parser import RFPParser
 from save_data_proxy import SaveDataProxy
+from pipeline_service import PipelineService
 
 # Load environment variables
 load_dotenv(override=True)
@@ -262,6 +263,17 @@ def render_rfp():
                 except Exception as e:
                     st.error(f"Error finding matches: {e}")
 
+        if ac2.button("Assign Programmers", use_container_width=True, type="primary"):
+            with st.spinner("Assigning programmers for this RFP..."):
+                try:
+                    service = PipelineService()
+                    rfp_id = rfp.get('id') or rfp.get('title')
+                    result = service.assign_programmers_for_rfp(rfp_id)
+                    st.success(f"✅ Assignments completed for project {result['project_id']}!")
+                    st.table(result["assignments"])
+                except Exception as e:
+                    st.error(f"Error during assignment: {e}")
+
         # Display matches if they exist for the current RFP
         if st.session_state.get('match_rfp_id') == rfp.get('entity_id') and 'current_matches' in st.session_state:
             st.markdown("### 🏆 Top Candidates")
@@ -309,7 +321,7 @@ def render_rfp():
             else:
                 st.info("No matching candidates found.")
         
-        if ac2.button("Complete RFP", use_container_width=True, type="secondary"):
+        if st.button("Complete RFP", use_container_width=True, type="secondary"):
             if delete_rfp(graph, rfp.get('entity_id')):
                 st.toast(f"✅ RFP '{rfp.get('title')}' completed and removed.", icon="✅")
                 time.sleep(1) # Allow toast to appear

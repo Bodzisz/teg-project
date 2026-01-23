@@ -1,4 +1,5 @@
 import argparse
+from datetime import datetime
 from dotenv import load_dotenv
 import json
 import logging
@@ -190,7 +191,7 @@ class RFPParser:
             existing = self.graph.query(check_query, {"project_id": f"PRJ-{rfp_id}"})
             if existing:
                 logger.info(f"Project PRJ-{rfp_id} already exists.")
-                return
+                return {"id": f"PRJ-{rfp_id}"}
 
             # Get RFP data
             rfp_query = """
@@ -250,8 +251,10 @@ class RFPParser:
                 "requirements": requirements
             })
             logger.info(f"✅ Project PRJ-{rfp_id} created from RFP {rfp_id}.")
+            return {"id": f"PRJ-{rfp_id}"}
         except Exception as e:
             logger.error("❌ Failed to create Project from RFP: %s", e)
+            return None
 
 
 

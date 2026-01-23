@@ -44,7 +44,6 @@ with st.sidebar:
     page = st.radio("", ["Chat", "RFPs", "Candidates"])
     st.markdown("---")
     st.markdown("### About")
-    st.info("This AI assistant helps you query the CV Knowledge Graph to find the best candidates.")
 
 if page == "Chat":
     render_chat()

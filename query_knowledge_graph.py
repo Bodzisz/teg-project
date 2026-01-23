@@ -463,8 +463,8 @@ Task:
             ]
         }
 
-    def query_graph(self, question: str, conversation_id: str = None) -> Dict[str, Any]:
-        """Execute a natural language query against the graph.
+    def query_graph_agent(self, question: str, conversation_id: str = None) -> Dict[str, Any]:
+        """Execute a natural language query against the graph using LangGraph Agent.
 
         Args:
             question: Natural language question
@@ -529,6 +529,62 @@ Task:
                 "question": question,
                 "answer": f"Error: {str(e)}",
                 "cypher_query": "",
+                "conversation_id": conversation_id,
+                "success": False
+            }
+
+    def query_graph_simple(self, question: str, conversation_id: str = None) -> Dict[str, Any]:
+        """Execute a natural language query against the graph using simple detailed Chain.
+        
+        This bypasses the Coordinator/Planner and runs a direct Cypher QA Chain.
+        """
+        if not conversation_id:
+            chat_history_str = "No history."
+        else:
+            if conversation_id not in self.chat_histories:
+                self.chat_histories[conversation_id] = []
+            history_list = self.chat_histories[conversation_id][-5:]
+            chat_history_str = "\n".join([f"Human: {q}\nAI: {a}" for q, a in history_list]) if history_list else "No history."
+
+        try:
+            logger.info(f"Executing query via Simple Graph Chain: {question}")
+            
+            result = self.qa_chain.invoke({
+                "query": question,
+                "chat_history": chat_history_str
+            })
+            
+            answer = result.get("result", "No answer")
+            
+            # Extract Cypher from intermediate steps if available
+            cypher_query = ""
+            context = []
+            if "intermediate_steps" in result:
+                steps = result["intermediate_steps"]
+                # Usually steps[0] is query generation, steps[1] is context retrieval
+                if len(steps) >= 1:
+                    cypher_query = steps[0].get("query", "")
+                if len(steps) >= 2:
+                    context = steps[1].get("context", [])
+
+            response = {
+                "question": question,
+                "answer": answer,
+                "cypher_query": cypher_query,
+                "context": context,
+                "conversation_id": conversation_id,
+                "success": True
+            }
+            
+            if conversation_id:
+                self.chat_histories[conversation_id].append((question, answer))
+                
+            logger.info(f"✓ Query executed successfully")
+            return response
+            
+        except Exception as e:
+            logger.error(f"Simple query failed: {e}")
+            return {
                 "question": question,
                 "answer": f"Error: {str(e)}",
                 "cypher_query": "",

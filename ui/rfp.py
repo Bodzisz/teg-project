@@ -59,6 +59,60 @@ def fetch_rfps(graph):
         st.error(f"Error executing query: {e}")
         return []
 
+
+def simulate_allocations(selected_matches):
+    """Simulate allocation split among selected matches without persisting.
+    selected_matches: list of dicts with keys `person_id` and `availability` (0-100)
+    Returns: (alloc_map, warnings)
+    """
+    warnings = []
+    n = len(selected_matches)
+    if n == 0:
+        return {}, ["No candidates selected for preview."]
+
+    # Normalize availability
+    avail_map = {}
+    for m in selected_matches:
+        pid = m.get('person_id')
+        try:
+            avail = int(float(m.get('availability') or 0))
+        except Exception:
+            avail = 0
+        avail_map[pid] = max(0, min(100, avail))
+
+    desired = round(100 / n)
+    alloc = {pid: 0 for pid in avail_map}
+
+    # First pass
+    for pid in alloc:
+        alloc[pid] = min(desired, avail_map[pid])
+
+    remaining = 100 - sum(alloc.values())
+
+    # Round-robin distribute remaining by 1% to those with capacity
+    if remaining > 0:
+        pids_with_capacity = [pid for pid in alloc if avail_map[pid] - alloc[pid] > 0]
+        if not pids_with_capacity:
+            warnings.append("Selected candidates do not have enough combined availability to reach 100%.")
+        else:
+            i = 0
+            while remaining > 0 and pids_with_capacity:
+                pid = pids_with_capacity[i % len(pids_with_capacity)]
+                if avail_map[pid] - alloc[pid] > 0:
+                    alloc[pid] += 1
+                    remaining -= 1
+                else:
+                    # remove from capacity list
+                    pids_with_capacity = [p for p in pids_with_capacity if avail_map[p] - alloc[p] > 0]
+                i += 1
+
+    # Generate warnings for zero allocations
+    for pid in alloc:
+        if alloc[pid] == 0:
+            warnings.append(f"Candidate {pid} has no available capacity and will not be allocated.")
+
+    return alloc, warnings
+
 def calculate_end_date(start_date_str, duration_months):
     """Calculate end date based on start date and duration."""
     try:
@@ -174,9 +228,9 @@ def render_rfp():
         st.info("No RFPs found in the database.")
         return
 
-    # Prepare list for selectbox
+    # Prepare list for selectbox (show entity_id and title)
     rfp_options = {
-        f"{item['r']['title']} ({item['r']['client']})": item 
+        f"{item['r'].get('entity_id','')} — {item['r'].get('title','Untitled RFP')} ({item['r'].get('client','')})": item
         for item in rfp_data
     }
     
@@ -186,6 +240,10 @@ def render_rfp():
         index=None,
         placeholder="Type to search..."
     )
+
+    # Ensure selected candidates list in session
+    if 'selected_candidates' not in st.session_state:
+        st.session_state['selected_candidates'] = []
 
     if selected_option:
         data = rfp_options[selected_option]
@@ -245,79 +303,125 @@ def render_rfp():
         else:
             st.info("No specific skill requirements listed.")
         
-        # Action Buttons (Mockup)
+        # Action Buttons (Find / Preview / Assign)
         st.markdown("### 🚀 Actions")
-        ac1, ac2 = st.columns(2)
+        ac1, ac2 = st.columns([1,1])
 
         if ac1.button("Find Matching Candidates", use_container_width=True, type="primary"):
             with st.spinner("Finding best matches..."):
                 try:
-                    # Initialize engine (assumes matching_engine.py is in python path)
                     from matching_engine import MatchingEngine
                     engine = MatchingEngine()
-                    # Use entity_id preferably, fallback to title
                     lookup_id = rfp.get('entity_id') or rfp.get('title')
                     matches = engine.rank_candidates(lookup_id, top_n=10)
                     st.session_state['current_matches'] = matches
                     st.session_state['match_rfp_id'] = rfp.get('entity_id')
+                    # clear previous selections
+                    st.session_state['selected_candidates'] = []
                 except Exception as e:
                     st.error(f"Error finding matches: {e}")
 
-        if ac2.button("Assign Programmers", use_container_width=True, type="primary"):
-            with st.spinner("Assigning programmers for this RFP..."):
-                try:
-                    service = PipelineService()
-                    rfp_id = rfp.get('id') or rfp.get('title')
-                    result = service.assign_programmers_for_rfp(rfp_id)
-                    st.success(f"✅ Assignments completed for project {result['project_id']}!")
-                    st.table(result["assignments"])
-                except Exception as e:
-                    st.error(f"Error during assignment: {e}")
+        # (Removed UI force-assign toggle: assignments from checkboxes are deterministic)
 
         # Display matches if they exist for the current RFP
         if st.session_state.get('match_rfp_id') == rfp.get('entity_id') and 'current_matches' in st.session_state:
             st.markdown("### 🏆 Top Candidates")
-            matches = st.session_state['current_matches']
+            matches = st.session_state['current_matches'] or []
             if matches:
-                for match in matches:
+                for idx, match in enumerate(matches):
                     score = match.get('score', 0)
-                    # The engine returns p.name as person_id which should be the full name
-                    person_name = match.get('person_id', 'Unknown') 
-                    
-                    # Format header
+                    person_id = match.get('person_id') or match.get('id') or match.get('name') or f"person_{idx}"
+                    person_name = match.get('display_name') or match.get('name') or person_id
                     mandatory_icon = "✅" if match.get('mandatory_met') else "⚠️"
-                    header_text = f"👤 {person_name} | 🏆 Score: {score:.1f} | {mandatory_icon}"
-                    
-                    with st.expander(header_text):
-                        # Layout columns for details
+                    header = f"{person_name} — Score: {score:.1f} {mandatory_icon}"
+
+                    # Checkbox for selection (disabled if no availability)
+                    avail = 0
+                    try:
+                        avail = int(float(match.get('availability') or 0))
+                    except Exception:
+                        avail = 0
+
+                    chk_key = f"chk_{idx}_{rfp.get('entity_id')}"
+                    checked = st.checkbox(f"Select {person_name} | Availability: {avail}% | Score: {score:.1f}",
+                                          value=(person_id in st.session_state['selected_candidates']),
+                                          key=chk_key,
+                                          disabled=(avail <= 0))
+
+                    # Update session_state selected list
+                    if checked and person_id not in st.session_state['selected_candidates']:
+                        st.session_state['selected_candidates'].append(person_id)
+                    if not checked and person_id in st.session_state['selected_candidates']:
+                        st.session_state['selected_candidates'].remove(person_id)
+
+                    with st.expander(header):
                         dc1, dc2 = st.columns(2)
-                        
                         dc1.markdown(f"**📍 Location:** {match.get('location', 'N/A')}")
                         dc1.markdown(f"**📧 Email:** {match.get('email', 'N/A')}")
                         dc1.markdown(f"**📅 Experience:** {match.get('years_experience', 0)} years")
-                        
-                        avail = match.get('availability', 0)
                         dc2.metric("Availability", f"{avail}%")
-                        
                         st.markdown("**📝 Bio:**")
                         st.write(match.get('description') or "No description available.")
-                        
+
                         if match.get('skills'):
                             st.markdown("**🛠 Skills:**")
-                            # Create a set of required skills for fast lookup
                             required_skill_names = {req.get('skill') for req in requirements if req.get('skill')}
-
                             skills_html = ""
                             for s in match.get('skills', []):
-                                skill_name = s['name']
+                                skill_name = s.get('name')
                                 is_match = skill_name in required_skill_names
-                                # Green for match (#2e7d32), default dark grey (#333) otherwise
                                 bg_color = "#2e7d32" if is_match else "#333"
-                                
                                 skills_html += f"<span style='background-color: {bg_color}; padding: 4px 8px; border-radius: 4px; margin-right: 5px; font-size: 0.8em;'>{skill_name} ({s.get('proficiency', 'N/A')})</span>"
                             st.markdown(skills_html, unsafe_allow_html=True)
                         else:
                             st.info("No skills listed.")
+
+                # Preview and assign controls
+                st.markdown("---")
+                prc, asc = st.columns([1,1])
+
+                if prc.button("Preview Allocation for Selected", use_container_width=True):
+                    selected_ids = st.session_state.get('selected_candidates', [])
+                    if not selected_ids:
+                        st.warning("No candidates selected for preview.")
+                    else:
+                        # Build selected_matches list from current matches
+                        selected_matches = [m for m in matches if (m.get('person_id') or m.get('id') or m.get('name')) in selected_ids]
+                        alloc_map, warnings = simulate_allocations(selected_matches)
+                        # Display allocations
+                        alloc_table = [{"person_id": pid, "proposed_allocation": alloc} for pid, alloc in alloc_map.items()]
+                        st.table(alloc_table)
+                        if warnings:
+                            with st.expander("Warnings", expanded=True):
+                                for w in warnings:
+                                    st.warning(w)
+
+                if asc.button("Assign Selected Candidates", use_container_width=True, type="primary"):
+                    selected_ids = st.session_state.get('selected_candidates', [])
+                    if not selected_ids:
+                        st.error("No candidates selected. Please select at least one candidate to assign.")
+                    else:
+                        with st.spinner("Assigning selected candidates..."):
+                            try:
+                                service = PipelineService()
+                                rfp_id_for_assign = rfp.get('entity_id') or rfp.get('title')
+                                # Always force assignment from UI selection (do not rely on assignment_probability)
+                                result = service.assign_selected_candidates_for_rfp(rfp_id_for_assign, selected_ids, force=True)
+                                st.success("Assignments saved.")
+                                # Show returned assignments if present
+                                if isinstance(result, dict) and result.get('assignments'):
+                                    st.table(result.get('assignments'))
+                                # Refresh matches to reflect updated availability
+                                try:
+                                    from matching_engine import MatchingEngine
+                                    engine = MatchingEngine()
+                                    new_matches = engine.rank_candidates(rfp.get('entity_id') or rfp.get('title'), top_n=10)
+                                    st.session_state['current_matches'] = new_matches
+                                    st.session_state['selected_candidates'] = []
+                                except Exception:
+                                    pass
+                            except Exception as e:
+                                st.error(f"Error during assignment: {e}")
             else:
                 st.info("No matching candidates found.")
         

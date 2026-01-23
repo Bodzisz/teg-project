@@ -26,6 +26,49 @@ class AssignmentResetter:
         self.graph.query(query)
         logger.info("✅ Wszystkie przypisania zostały usunięte.")
 
+    def clear_allocations(self):
+        """
+        Usuwa właściwości alokacji z relacji ASSIGNED_TO, ale nie usuwa samych relacji.
+        """
+        query = """
+        MATCH (p:Person)-[r:ASSIGNED_TO]->(proj:Project)
+        REMOVE r.allocation_percentage, r.start_date, r.end_date, r.created_at
+        RETURN count(r) as cleared
+        """
+        try:
+            res = self.graph.query(query)
+            count = res[0]["cleared"] if res else 0
+        except Exception:
+            # Some Neo4j drivers don't return rows for REMOVE; still run without counting
+            self.graph.query("MATCH (p:Person)-[r:ASSIGNED_TO]->(proj:Project) REMOVE r.allocation_percentage, r.start_date, r.end_date, r.created_at")
+            count = None
+
+        logger.info(f"✅ Wyczyść właściwości alokacji na relacjach ASSIGNED_TO (liczba dot.: {count})")
+
+    def reset_availability(self, value: int = 100):
+        """
+        Resetuje pole `availability` na wszystkich węzłach Person do podanej wartości (domyślnie 100).
+        """
+        query = """
+        MATCH (p:Person)
+        SET p.availability = $value
+        RETURN count(p) as updated
+        """
+        res = self.graph.query(query, {"value": int(value)})
+        updated = res[0]["updated"] if res else 0
+        logger.info(f"✅ Zresetowano availability dla {updated} programistów na {value}%.")
+
+    def clear_matches(self):
+        """
+        Usuwa wszystkie relacje MATCHED_TO (wymusza ponowne rankowanie).
+        """
+        query = """
+        MATCH (p:Person)-[r:MATCHED_TO]->(rfp:RFP)
+        DELETE r
+        """
+        self.graph.query(query)
+        logger.info("✅ Wszystkie relacje MATCHED_TO zostały usunięte.")
+
     def reset_projects(self):
         """
         Usuwa wszystkie węzły Project wraz z ich relacjami.
@@ -96,13 +139,22 @@ class AssignmentResetter:
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Resetuj przypisania w Neo4j.")
-    parser.add_argument("--mode", choices=["all", "project", "programmer", "delete_projects", "delete_programmers", "delete_project", "delete_programmer"], default="all", help="Tryb resetu")
+    parser.add_argument("--mode", choices=["assignments", "clear_allocations", "reset_availability", "clear_matches", "all", "project", "programmer", "delete_projects", "delete_programmers", "delete_project", "delete_programmer"], default="assignments", help="Tryb resetu")
     parser.add_argument("--id", type=str, help="ID projektu lub programisty (w trybie project/programmer/delete_project/delete_programmer)")
+    parser.add_argument("--availability", type=int, default=100, help="Wartość availability przy użyciu trybu reset_availability")
     args = parser.parse_args()
 
     resetter = AssignmentResetter()
 
-    if args.mode == "all":
+    if args.mode == "assignments":
+        resetter.reset_assignments()
+    elif args.mode == "clear_allocations":
+        resetter.clear_allocations()
+    elif args.mode == "reset_availability":
+        resetter.reset_availability(args.availability)
+    elif args.mode == "clear_matches":
+        resetter.clear_matches()
+    elif args.mode == "all":
         resetter.reset_assignments()
     elif args.mode == "project" and args.id:
         resetter.reset_specific_project(args.id)
@@ -117,4 +169,4 @@ if __name__ == "__main__":
     elif args.mode == "delete_programmer" and args.id:
         resetter.delete_specific_programmer(args.id)
     else:
-        logger.error("❌ Niepoprawne argumenty. Użyj --mode [all|project|programmer|delete_projects|delete_programmers|delete_project|delete_programmer] oraz --id w odpowiednich trybach.")
+        logger.error("❌ Niepoprawne argumenty. Użyj --mode [assignments|clear_allocations|reset_availability|clear_matches|all|project|programmer|delete_projects|delete_programmers|delete_project|delete_programmer] oraz --id w odpowiednich trybach.")

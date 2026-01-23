@@ -19,15 +19,6 @@ num_projects = 10
 # Number of RFP documents to generate
 num_rfps = 3
 
-[assignment]
-# Probability that a project gets programmer assignments (0.0 - 1.0)
-# Lower values leave more programmers available for new projects
-assignment_probability = 0.8
-
-# Range of days before project end that assignments should end
-assignment_end_days_before_min = 1
-assignment_end_days_before_max = 30
-
 [project_requirements]
 # Range of skill requirements per project
 min_requirements = 2
@@ -38,11 +29,36 @@ mandatory_probability = 0.5
 
 [skills]
 # Available proficiency levels (Expert removed for better matching)
-proficiency_levels = ["Beginner", "Intermediate", "Advanced"]
+proficiency_levels = ["Beginner", "Intermediate", "Advanced", "Expert"]
 
 # Proficiency distribution weights for programmer skills
 # [Beginner, Intermediate, Advanced, Expert]
 proficiency_weights = [10, 40, 35, 15]
+
+[scoring]
+# Weights used by CandidateScoringEngine
+skill_match_weight = 10
+proficiency_weight = 2
+mandatory_bonus = 20
+certification_bonus = 10
+experience_weight = 1.5
+availability_weight = 0.5
+
+[assignment]
+# Probability that a project gets programmer assignments (0.0 - 1.0)
+# Lower values leave more programmers available for new projects
+assignment_probability = 0.8
+
+# Threshold score required to consider a candidate as meeting RFP needs
+threshold_score = 30
+# Minimum availability percentage required to consider a candidate (0-100)
+min_needed = 10
+# Minimum allocation percent when redistributing
+min_allocation_percent = 1
+
+# Range of days before project end that assignments should end
+assignment_end_days_before_min = 1
+assignment_end_days_before_max = 30
 
 [output]
 # Output directories for different file types

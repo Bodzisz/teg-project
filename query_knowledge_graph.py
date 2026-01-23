@@ -23,6 +23,7 @@ from langgraph.graph import StateGraph, START, END
 from typing import TypedDict, Annotated, List, Dict, Any, Optional
 import operator
 from naive_rag_querier import NaiveRAGQuerier
+from datetime import datetime
 
 class AgentState(TypedDict):
     original_query: str
@@ -115,6 +116,7 @@ Do not use any other relationship types or properties that are not provided.
 For skill matching, always use case-insensitive comparison using toLower() function.
 For count queries, ensure you return meaningful column names.
 Use the provided Chat History to filter results if the question refers to previous context (e.g., "they", "those people").
+If the question is about relative date (e.g. tomorrow, yesterday, last week, next week), use {today} as the date. Treat Q1, Q2, Q3, Q4 as 1st, 2nd, 3rd, 4th quarter of current year.
 
 Schema:
 {schema}
@@ -141,7 +143,6 @@ WHERE toLower(s1.id) = toLower("Python") AND toLower(s2.id) = toLower("Django")
 RETURN p.id AS name
 
 The question is:
-The question is:
 {question}
 
 Chat History (for context):
@@ -149,6 +150,7 @@ Chat History (for context):
 
         CYPHER_GENERATION_PROMPT = PromptTemplate(
             input_variables=["schema", "question", "chat_history"],
+            partial_variables={"today": datetime.now().strftime("%Y-%m-%d")},
             template=CYPHER_GENERATION_TEMPLATE
         )
 
@@ -165,6 +167,7 @@ Guidelines:
 - Be specific and mention actual names, numbers, or details from the information.
 - IMPORTANT!!!: In where conditions prefer to use contains() function instead of = for better matching. For example, if user asks for "security" projects, use category contains "security" instead of category = "security".
 - "Developer" maps to Person node.
+- If the question is about relative date (e.g. tomorrow, yesterday, last week, next week), use {today} as the date. Treat Q1, Q2, Q3, Q4 as 1st, 2nd, 3rd, 4th quarter of current year.
 
 Information:
 {context}
@@ -174,6 +177,7 @@ Helpful Answer:"""
 
         CYPHER_QA_PROMPT = PromptTemplate(
             input_variables=["context", "question"],
+            partial_variables={"today": datetime.now().strftime("%Y-%m-%d")},
             template=CYPHER_QA_TEMPLATE
         )
 
@@ -214,6 +218,7 @@ Important:
 - If `latest_query_result` contains a list of entities in `context` (e.g. `['name': 'Alice']`), TRUST IT.
 - If the query was "Find people with skill X" and you got a list of people, that IS the answer. Do not ask to "verify" their skills unless explicitly requested.
 - If the answer is "I don't know" or empty, then ask for a retrial with a broader strategy.
+- If the question is about relative date (e.g. tomorrow, yesterday, last week, next week), use {today} as the date. Treat Q1, Q2, Q3, Q4 as 1st, 2nd, 3rd, 4th quarter of current year.
 
 Response Format:
 NEXT: [FINISH or PLAN]
@@ -221,6 +226,7 @@ NEXT: [FINISH or PLAN]
 
         COORDINATOR_PROMPT = PromptTemplate(
             input_variables=["original_query", "chat_history", "gathered_info", "latest_query_result"],
+            partial_variables={"today": datetime.now().strftime("%Y-%m-%d")},
             template=COORDINATOR_TEMPLATE
         )
 
@@ -244,6 +250,7 @@ Strategies:
 - **Fallback**: If Graph Search keeps failing or the question is about unstructured text, use Vector Search.
 - **Matching**: In where conditions prefer to use contains() function instead of = for better matching. For example, if user asks for "security" projects, use category contains "security" instead of category = "security".
 - **Generic, Broad Questions**: If the question is generic, answer it in the context of assignments to projects, people skills and relations in graph
+- **Dates**: If the question is about relative date (e.g. tomorrow, yesterday, last week, next week), use {today} as the date. Treat Q1, Q2, Q3, Q4 as 1st, 2nd, 3rd, 4th quarter of current year.
 
 Examples:
 - User: "Who knows React and Vue?"
@@ -259,6 +266,7 @@ Output Format:
 
         PLANNER_PROMPT = PromptTemplate(
             input_variables=["original_query", "coordinator_feedback", "schema"],
+            partial_variables={"today": datetime.now().strftime("%Y-%m-%d")},
             template=PLANNER_TEMPLATE
         )
 

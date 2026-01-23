@@ -22,6 +22,7 @@ from langchain_core.prompts.prompt import PromptTemplate
 from langgraph.graph import StateGraph, START, END
 from typing import TypedDict, Annotated, List, Dict, Any, Optional
 import operator
+from naive_rag_querier import NaiveRAGQuerier
 
 class AgentState(TypedDict):
     original_query: str
@@ -58,9 +59,24 @@ class CVGraphRAGSystem:
         """Initialize the GraphRAG system."""
         self.setup_neo4j()
         self.setup_qa_chain()
+        self.naive_rag = NaiveRAGQuerier() # Initialize Naive RAG for fallback
         self.setup_workflow()
         self.load_example_queries()
         self.chat_histories = {}  # Store conversation histories in memory
+
+    def _clean_cypher_query(self, query: str) -> str:
+        """Clean up Cypher query by removing markdown formatting."""
+        if not query:
+            return ""
+            
+        # Remove markdown code blocks
+        clean_query = query.replace("```cypher", "").replace("```", "").strip()
+        
+        # Handle case where language identifier might have a space or different casing
+        if clean_query.lower().startswith("cypher"):
+             clean_query = clean_query[6:].strip()
+             
+        return clean_query
 
     def setup_neo4j(self):
         """Setup Neo4j connection."""
@@ -147,6 +163,8 @@ Guidelines:
 - If the information is empty or null, then say you don't know the answer.
 - Use the provided information to construct a helpful answer.
 - Be specific and mention actual names, numbers, or details from the information.
+- IMPORTANT!!!: In where conditions prefer to use contains() function instead of = for better matching. For example, if user asks for "security" projects, use category contains "security" instead of category = "security".
+- "Developer" maps to Person node.
 
 Information:
 {context}
@@ -206,25 +224,41 @@ NEXT: [FINISH or PLAN]
             template=COORDINATOR_TEMPLATE
         )
 
-        PLANNER_TEMPLATE = """You are the Planner. Your job is to formulate a SINGLE, SPECIFIC natural language question for the Graph Querier.
+        PLANNER_TEMPLATE = """You are the Planner. Your job is to formulate a SINGLE, SPECIFIC step for the Querier.
         
 Original Query: {original_query}
 Coordinator Feedback: {coordinator_feedback}
 
 Schema Overview:
-- Nodes: Person, Skill, Company, Project, Certification, University, RFP
-- Relationships: HAS_SKILL, WORKED_AT, WORKED_ON, EARNED, STUDIED_AT, NEEDS
+{schema}
 - Properties: names are usually 'id' or 'name'. Skills are single words.
+
+Capabilities:
+1. **Graph Search**: For structured data (counts, specific relationships, explicit filters).
+2. **Vector Search**: For unstructured concepts (e.g. "leadership style", "soft skills", "project details") or when Graph Search fails.
 
 Strategies:
 - **Concept Expansion**: If the feedback mentions a broad role (e.g. "Frontend"), create a query checking for specific skills (React, Vue, JS).
 - **Simplification**: If the previous query was too complex, break it down.
 - **Variation**: If the previous query returned 0, try synonyms or less restrictive conditions.
+- **Fallback**: If Graph Search keeps failing or the question is about unstructured text, use Vector Search.
+- **Matching**: In where conditions prefer to use contains() function instead of = for better matching. For example, if user asks for "security" projects, use category contains "security" instead of category = "security".
+- **Generic, Broad Questions**: If the question is generic, answer it in the context of assignments to projects, people skills and relations in graph
 
-Output ONLY the new specific question to ask the graph."""
+Examples:
+- User: "Who knows React and Vue?"
+  Plan: "Find people who have BOTH React AND Vue skills." (Use single query with AND)
+- User: "Find best Python dev"
+  Plan: "Find people with 'Python' skill and return their project count."
+- User: "What is the leadership style of John?"
+  Plan: "VECTOR: leadership style of John"
+
+Output Format:
+- For Graph Search: Just the natural language question (e.g. "Find people with React").
+- For Vector Search: Prefix with `VECTOR:` (e.g. "VECTOR: Find candidates with strong leadership style")."""
 
         PLANNER_PROMPT = PromptTemplate(
-            input_variables=["original_query", "coordinator_feedback"],
+            input_variables=["original_query", "coordinator_feedback", "schema"],
             template=PLANNER_TEMPLATE
         )
 
@@ -296,7 +330,8 @@ Task:
             
             formatted_prompt = PLANNER_PROMPT.format(
                 original_query=original_query,
-                coordinator_feedback=feedback
+                coordinator_feedback=feedback,
+                schema=self.graph.get_schema
             )
             
             try:
@@ -308,28 +343,85 @@ Task:
                 return {"current_plan_step": original_query} # Fallback to original
 
         def graph_querier_node(state: AgentState) -> AgentState:
-            """Execute the planned query."""
-            question = state["current_plan_step"]
+            """Execute the planned query (Graph or Vector)."""
+            step = state["current_plan_step"]
             chat_history = state.get("chat_history", "")
             
             try:
-                # Reuse the existing QA chain
-                result = self.qa_chain.invoke({
-                    "query": question,
-                    "chat_history": chat_history
-                })
-                
-                answer = result.get("result", "No answer")
-                steps = result.get("intermediate_steps", [])
-                cypher = steps[0].get("query", "") if steps else ""
-                context = steps[1].get("context", []) if len(steps) > 1 else []
-                
-                query_result = {
-                    "asked": question,
-                    "cypher": cypher,
-                    "context": context,
-                    "answer": answer
-                }
+                # Check for Vector Search request
+                if step.strip().upper().startswith("VECTOR:"):
+                    # Execute Vector Search
+                    query_text = step.replace("VECTOR:", "").strip()
+                    logger.info(f"Executing Vector Search: {query_text}")
+                    
+                    vector_result = self.naive_rag.query(query_text)
+                    
+                    answer = vector_result.get("answer", "No answer from vector search.")
+                    context_info = vector_result.get("context_info", [])
+                    
+                    query_result = {
+                        "asked": step,
+                        "type": "vector",
+                        "answer": answer,
+                        "context": context_info
+                    }
+                else:
+                    # Execute Graph Search (default)
+                    logger.info(f"Executing Graph Search: {step}")
+                    
+                    # --- Self-Correcting Cypher Logic ---
+                    
+                    # 1. Generate Cypher
+                    cypher_res = self.qa_chain.cypher_generation_chain.invoke({
+                        "question": step, 
+                        "chat_history": chat_history,
+                        "schema": self.graph.get_schema
+                    })
+                    if isinstance(cypher_res, str):
+                        cypher = cypher_res
+                    else:
+                        cypher = cypher_res.get("text", "")
+                    
+                    # Clean up the generated Cypher
+                    cypher = self._clean_cypher_query(cypher)
+                    
+                    # 2. Execute with Retry
+                    context = []
+                    try:
+                        context = self.graph.query(cypher)
+                    except Exception as e:
+                        logger.warning(f"Cypher Error: {e}. Attempting self-correction...")
+                        # Self-correction attempt
+                        correction_prompt = f"Fix this Cypher query error:\nQuery: {cypher}\nError: {e}\nSchema: {self.graph.get_schema}\nOnly output the fixed Cypher. Do not include markdown formatting."
+                        try:
+                            cypher = self.llm.invoke(correction_prompt).content.strip()
+                            cypher = self._clean_cypher_query(cypher)
+                            context = self.graph.query(cypher)
+                            logger.info("✓ Cypher corrected successfully")
+                        except Exception as e2:
+                             logger.error(f"Correction failed: {e2}")
+                             # If correction fails, we return generic error or empty context
+                             cypher = f"FAILED: {cypher}"
+                             context = []
+
+                    # 3. Generate Answer from Context
+                    # We can use the existing QA prompt chain manually
+                    qa_res = self.qa_chain.qa_chain.invoke({
+                        "question": step, 
+                        "context": context
+                    })
+                    if isinstance(qa_res, str):
+                        answer = qa_res
+                    else:
+                        answer = qa_res.get("text", "No answer")
+                    
+                    query_result = {
+                        "asked": step,
+                        "type": "graph",
+                        "cypher": cypher,
+                        "context": context,
+                        "answer": answer
+                    }
                 
                 # Update gathered info
                 new_gathered = state.get("gathered_info", []) + [query_result]
@@ -340,7 +432,7 @@ Task:
                 }
                 
             except Exception as e:
-                error_result = {"asked": question, "error": str(e)}
+                error_result = {"asked": step, "error": str(e)}
                 new_gathered = state.get("gathered_info", []) + [error_result]
                 return {
                     "latest_query_result": error_result,

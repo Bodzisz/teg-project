@@ -3,6 +3,7 @@ import logging
 import json
 from typing import List, Dict, Any
 from langchain_neo4j import Neo4jGraph
+from scoring import CandidateScoringEngine
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -39,109 +40,123 @@ class MatchingEngine:
         logger.info(f"✅ Found RFP: {rfp_data['title']} with requirements: {rfp_data['required_skills']}")
         return rfp_data['required_skills']
 
-    def score_candidate(self, person: Dict[str, Any], rfp_skills: List[str]) -> int:
-        """
-        Calculates score for a single candidate based on skills, experience and availability.
-        This is a helper function if we were to process in Python.
-        """
-        score = 0
-        
-        # Skill Match
-        person_skills = [s['name'] for s in person.get('skills', [])]
-        for r_skill in rfp_skills:
-            if r_skill in person_skills:
-                score += 10 # Base score for matching skill
-                
-                # Proficiency bonus
-                # Find the specific skill proficiency
-                skill_data = next((s for s in person['skills'] if s['name'] == r_skill), None)
-                if skill_data:
-                    proficiency = skill_data.get('proficiency', 'Beginner')
-                    if proficiency == 'Intermediate': score += 3
-                    elif proficiency == 'Advanced': score += 5
-                    elif proficiency == 'Expert': score += 8
-                    else: score += 1 # Beginner
-
-        # Experience
-        years_exp = person.get('years_experience', 0)
-        if years_exp:
-            try:
-                score += int(years_exp) * 2
-            except:
-                pass
-
-        # Availability
-        availability = person.get('availability', 0)
-        score += int(availability * 0.5) # 50 points for 100% availability
-
-        return score
-
     def rank_candidates(self, rfp_id: str, top_n: int = 20) -> List[Dict[str, Any]]:
         """
         Ranks candidates for a specific RFP using Cypher for efficiency.
         Includes saving the MATCHED_TO relationship in the graph.
         """
         
-        # We will use a comprehensive Cypher query to score and rank
-        query = """
+        # Use the centralized scoring engine to compute scores consistently
+        scorer = CandidateScoringEngine(config_path="utils/config.toml")
+
+        # Fetch RFP requirements
+        req_q = """
         MATCH (r:RFP)
         WHERE r.id = $rfp_id OR r.title = $rfp_id
         WITH r LIMIT 1
-        
-        // Collect requirements first
-        OPTIONAL MATCH (r)-[needs:NEEDS]->(req_skill:Skill)
-        WITH r, collect({name: req_skill.name, mandatory: needs.is_mandatory}) as required_skills
-        
-        // Then match persons and their skills
-        MATCH (p:Person)
-        OPTIONAL MATCH (p)-[hs:HAS_SKILL]->(p_skill:Skill)
-        WITH r, required_skills, p, collect({name: p_skill.name, proficiency: hs.proficiency}) as person_skills
-
-        WITH r, p, required_skills, person_skills,
-            reduce(s = 0.0, req IN required_skills |
-                s + CASE
-                    WHEN req.name IN [ps IN person_skills | ps.name] THEN
-                        CASE WHEN req.mandatory THEN 20.0 ELSE 10.0 END
-                    ELSE 0.0
-                END
-            ) AS skill_score,
-            all(req IN required_skills WHERE (NOT req.mandatory) OR req.name IN [ps IN person_skills | ps.name]) AS mandatory_met
-
-        // Experience and Availability Scores
-        WITH r, p, skill_score, person_skills,
-            toInteger(coalesce(p.years_experience, 0)) * 2.0 AS exp_score,
-            coalesce(p.availability, 0) * 0.5 AS avail_score,
-            mandatory_met
-
-        // Total Score with mandatory boost
-        WITH r, p, skill_score + exp_score + avail_score AS total_score, mandatory_met, person_skills
-        WHERE total_score > 0
-
-        // Persist the score
-        MERGE (p)-[m:MATCHED_TO]->(r)
-        SET m.score = total_score,
-            m.mandatory_met = mandatory_met,
-            m.updated_at = datetime()
-            
-        RETURN p.name AS person_id, total_score AS score, mandatory_met,
-               p.location as location, p.email as email, p.description as description, 
-               p.years_experience as years_experience, p.availability as availability,
-               person_skills as skills
-        ORDER BY score DESC
-        LIMIT $top_n
-
+        OPTIONAL MATCH (r)-[needs:NEEDS]->(s:Skill)
+        RETURN r.id as rfp_id, collect({name: s.name, mandatory: needs.is_mandatory, min_proficiency: needs.min_proficiency, preferred_certifications: needs.preferred_certifications}) as requirements
         """
-        
-        try:
-            results = self.graph.query(query, {"rfp_id": rfp_id, "top_n": top_n})
-            logger.info(f"✅ Ranked {len(results)} candidates for {rfp_id}")
-            # Enhance results with rfp_id for consistency if needed, though mostly used for display here
-            for r in results:
-                r['rfp_id'] = rfp_id
-            return results
-        except Exception as e:
-            logger.error(f"❌ Error ranking candidates: {e}")
+        rres = self.graph.query(req_q, {"rfp_id": rfp_id})
+        if not rres:
+            logger.warning(f"❌ RFP not found: {rfp_id}")
             return []
+        requirements = rres[0].get("requirements", [])
+
+        # Fetch candidate basics
+        cand_q = """
+        MATCH (p:Person)
+        OPTIONAL MATCH (p)-[hs:HAS_SKILL]->(s:Skill)
+        OPTIONAL MATCH (p)-[:EARNED]->(c:Certification)
+        RETURN p.name as person_id, p.email as email, p.location as location, p.description as description,
+               p.years_experience as years_experience, p.availability as availability,
+               collect(DISTINCT {name: s.name, proficiency: hs.proficiency}) as skills,
+               collect(DISTINCT c.name) as certifications
+        """
+        try:
+            candidates = self.graph.query(cand_q)
+        except Exception as e:
+            logger.error(f"❌ Error fetching candidates: {e}")
+            return []
+
+        all_scored = []
+        for c in candidates:
+            candidate = {
+                "person_id": c.get("person_id"),
+                "email": c.get("email"),
+                "location": c.get("location"),
+                "description": c.get("description"),
+                "years_experience": c.get("years_experience") or 0,
+                "availability": c.get("availability") or 0,
+                "skills": c.get("skills") or [],
+                "certifications": c.get("certifications") or []
+            }
+            score_info = scorer.calculate_score(candidate, requirements)
+            score = score_info["score"]
+            mandatory_met = score_info["mandatory_met"]
+            logger.debug(f"Score for {candidate['person_id']}: {score} breakdown={score_info['breakdown']}")
+
+            # Collect all scored candidates for UI ranking
+            all_scored.append({
+                "person_id": candidate["person_id"],
+                "score": score,
+                "mandatory_met": mandatory_met,
+                "location": candidate.get("location"),
+                "email": candidate.get("email"),
+                "description": candidate.get("description"),
+                "years_experience": candidate.get("years_experience"),
+                "availability": candidate.get("availability"),
+                "skills": candidate.get("skills"),
+                "breakdown": score_info.get("breakdown")
+            })
+
+        # Persist MATCHED_TO for a relaxed set of candidates so the system is useful
+        threshold = float(scorer.threshold_score)
+        min_avail = int(scorer.min_needed)
+        # Relaxed criteria: 70% of score threshold or half availability
+        relaxed_score = threshold * 0.7 if threshold > 0 else 0
+        relaxed_avail = max(0, int(min_avail * 0.5))
+        persisted = 0
+        # Ensure we always persist the top-N so UI/assignment can reference them
+        all_scored.sort(key=lambda x: x["score"], reverse=True)
+        top_ids = {c["person_id"] for c in all_scored[:top_n]}
+
+        for cand in all_scored:
+            meets_strict = (cand["score"] >= threshold and cand["availability"] >= min_avail)
+            meets_relaxed = (cand["score"] >= relaxed_score and cand["availability"] >= relaxed_avail)
+            should_persist = (cand["person_id"] in top_ids) or meets_strict or meets_relaxed
+            if not should_persist:
+                continue
+            try:
+                m_q = """
+                MATCH (p:Person {name: $person_id})
+                MATCH (r:RFP)
+                WHERE r.id = $rfp_id OR r.title = $rfp_id
+                MERGE (p)-[m:MATCHED_TO]->(r)
+                SET m.score = $score,
+                    m.mandatory_met = $mandatory_met,
+                    m.meets_threshold = $meets_threshold,
+                    m.updated_at = datetime()
+                RETURN m
+                """
+                self.graph.query(m_q, {
+                    "person_id": cand["person_id"],
+                    "rfp_id": rfp_id,
+                    "score": cand["score"],
+                    "mandatory_met": cand["mandatory_met"],
+                    "meets_threshold": meets_strict
+                })
+                persisted += 1
+            except Exception as e:
+                logger.warning(f"Failed to persist MATCHED_TO for {cand['person_id']}: {e}")
+
+        # sort and return top_n (return top candidates for UI regardless of persistence)
+        all_scored.sort(key=lambda x: x["score"], reverse=True)
+        out = all_scored[:top_n]
+        logger.info(f"✅ Ranked {len(out)} candidates for {rfp_id} (persisted={persisted}, threshold={scorer.threshold_score}, min_avail={scorer.min_needed})")
+        for r in out:
+            r["rfp_id"] = rfp_id
+        return out
 
     def get_all_matches(self) -> List[Dict[str, Any]]:
         """

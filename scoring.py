@@ -38,8 +38,16 @@ class CandidateScoringEngine:
         skills_cfg = self.config.get("skills", {})
         levels = skills_cfg.get("proficiency_levels", [])
         weights = skills_cfg.get("proficiency_weights", [])
-        if levels and weights and len(levels) != len(weights):
-            logger.warning(f"proficiency_levels length ({len(levels)}) != proficiency_weights length ({len(weights)}). Using default prof_map for scoring.")
+        if levels and weights:
+            if len(levels) != len(weights):
+                logger.warning(f"proficiency_levels length ({len(levels)}) != proficiency_weights length ({len(weights)}). Using default prof_map for scoring.")
+            else:
+                try:
+                    # Build prof_map from config
+                    self.prof_map = {levels[i]: float(weights[i]) for i in range(len(levels))}
+                    logger.info("Using proficiency mapping from config: %s", self.prof_map)
+                except Exception as e:
+                    logger.warning("Failed to build prof_map from config, using defaults: %s", e)
 
     def calculate_score(self, candidate: Dict[str, Any], rfp_requirements: List[Dict[str, Any]]) -> Dict[str, Any]:
         """

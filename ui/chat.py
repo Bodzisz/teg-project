@@ -19,7 +19,7 @@ def render_chat():
         st.error(f"Failed to connect to system: {e}")
         st.stop()
 
-    st.markdown("Ask questions about candidates, skills, companies, and more based on the CV database.")
+    # st.markdown("Ask questions about candidates, skills, companies, and more based on the CV database.")
     
     # Mode Switch in Sidebar
     mode = "graph"
@@ -27,11 +27,17 @@ def render_chat():
         st.markdown("### ⚙️ RAG Settings")
         rag_mode = st.radio(
             "Select RAG Mode:",
-            ("Graph RAG (Structured)", "Naive RAG (Vector)"),
+            ("Graph RAG (Simple)", "Agent RAG (Advanced)", "Naive RAG (Vector)"),
             index=0,
-            help="Graph RAG uses knowledge graph for structured queries. Naive RAG uses vector similarity search."
+            help="Graph RAG: Direct Cypher queries (Fast). Agent RAG: Multi-step reasoning (Smart). Naive RAG: Vector similarity."
         )
-        mode = "graph" if "Graph" in rag_mode else "naive"
+        
+        if "Agent" in rag_mode:
+            mode = "agent"
+        elif "Graph" in rag_mode:
+            mode = "graph"
+        else:
+            mode = "naive"
         
         st.divider()
         

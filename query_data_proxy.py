@@ -53,23 +53,16 @@ class QueryDataProxy:
         }
 
         try:
-            if mode == "graph":
-                # For Graph RAG, we can pass the history if the underlying system supports it.
-                # Currently CVGraphRAGSystem.query_graph manages its own history but takes conversation_id.
-                # Ideally, we should sync them or rely on one.
-                # To avoid conflict, we can either:
-                # 1. Let Graph RAG manage its own history (it does) and we just pass the ID.
-                # 2. Modify Graph RAG to accept history string.
-                # Given the current implementation of CVGraphRAGSystem.query_graph, it retrieves history internally using conversation_id.
-                # However, if we switch modes, the internal history of one system won't know about the other.
-                # So passing history is better.
-                # BUT, modifying CVGraphRAGSystem might be invasive.
-                # The prompt construction in CVGraphRAGSystem uses self.chat_histories[conversation_id].
-                # We can inject our history into the graph_rag instance before querying.
-                
+            if mode == "agent":
+                # Agent RAG (Multi-Step / LangGraph)
                 self.graph_rag.chat_histories[conversation_id] = self.chat_histories[conversation_id]
-                
-                result = self.graph_rag.query_graph(question, conversation_id)
+                result = self.graph_rag.query_graph_agent(question, conversation_id)
+                response.update(result)
+
+            elif mode == "graph":
+                # Simple Graph RAG (Original)
+                self.graph_rag.chat_histories[conversation_id] = self.chat_histories[conversation_id]
+                result = self.graph_rag.query_graph_simple(question, conversation_id)
                 response.update(result)
                 
             elif mode == "naive":

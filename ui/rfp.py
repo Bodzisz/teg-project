@@ -113,6 +113,29 @@ def simulate_allocations(selected_matches):
 
     return alloc, warnings
 
+
+def sanitize_for_display(rows):
+    """Convert non-serializable values (dates, neo4j objects) to strings for Streamlit display."""
+    out = []
+    for r in rows:
+        new = {}
+        for k, v in (r or {}).items():
+            if v is None:
+                new[k] = ""
+            elif isinstance(v, (str, int, float, bool)):
+                new[k] = v
+            else:
+                try:
+                    # Try common date-like objects
+                    if hasattr(v, "isoformat"):
+                        new[k] = v.isoformat()
+                    else:
+                        new[k] = str(v)
+                except Exception:
+                    new[k] = str(v)
+        out.append(new)
+    return out
+
 def calculate_end_date(start_date_str, duration_months):
     """Calculate end date based on start date and duration."""
     try:
@@ -248,11 +271,61 @@ def render_rfp():
     if selected_option:
         data = rfp_options[selected_option]
         rfp = data['r']
+        # Show existing project assignments (if any)
+        try:
+            rfp_id_lookup = rfp.get('entity_id') or rfp.get('id') or rfp.get('title')
+            proj_q = """
+            MATCH (r:RFP)
+            WHERE r.id = $rfp_id OR r.entity_id = $rfp_id OR r.title = $rfp_id
+            OPTIONAL MATCH (r)-[:GENERATES]->(pr:Project)
+            OPTIONAL MATCH (p:Person)-[a:ASSIGNED_TO]->(pr)
+            RETURN pr.id as project_id, pr.name as project_name, collect({person: p.name, allocation: a.allocation_percentage}) as assignments
+            LIMIT 1
+            """
+            proj_res = graph.query(proj_q, {"rfp_id": rfp_id_lookup})
+            if proj_res and proj_res[0].get('project_id'):
+                proj = proj_res[0]
+                assignments = proj.get('assignments') or []
+                # Compute total allocation and display assignments
+                total_alloc = 0
+                rows = []
+                for a in assignments:
+                    person = a.get('person') or a.get('person_name') or a.get('programmer_name')
+                    # support different allocation key names
+                    alloc_val = a.get('allocation') or a.get('allocation_percentage') or a.get('proposed_allocation')
+                    try:
+                        alloc_int = int(float(alloc_val or 0))
+                    except Exception:
+                        alloc_int = 0
+                    total_alloc += alloc_int
+                    if person:
+                        rows.append({"person": person, "allocation": alloc_int, "start_date": a.get('start_date'), "end_date": a.get('end_date')})
+
+                if rows:
+                    st.markdown("### 🔁 Existing Assignments")
+                    st.table(sanitize_for_display(rows))
+                    # Show total and prevent further assignments when fully allocated
+                    st.info(f"Total allocation for this project: {total_alloc}%")
+                    if total_alloc >= 100:
+                        st.warning("This project is fully allocated (100%). Complete this RFP before assigning more.")
+                        st.session_state['current_rfp_fully_allocated'] = True
+                    else:
+                        st.session_state['current_rfp_fully_allocated'] = False
+                else:
+                    # No assignments for this project; ensure flag is cleared
+                    st.session_state['current_rfp_fully_allocated'] = False
+            else:
+                # No project generated for this RFP yet; ensure assignment controls are enabled
+                st.session_state['current_rfp_fully_allocated'] = False
+        except Exception:
+            pass
         
         # Reset matches if RFP changed
         if st.session_state.get('last_viewed_rfp_id') != rfp.get('entity_id'):
             st.session_state['current_matches'] = []
             st.session_state['match_rfp_id'] = None
+            # reset fully-allocated flag when switching RFPs
+            st.session_state['current_rfp_fully_allocated'] = False
             st.session_state['last_viewed_rfp_id'] = rfp.get('entity_id')
 
         requirements = data['requirements']
@@ -307,7 +380,11 @@ def render_rfp():
         st.markdown("### 🚀 Actions")
         ac1, ac2 = st.columns([1,1])
 
-        if ac1.button("Find Matching Candidates", use_container_width=True, type="primary"):
+        disabled_controls = st.session_state.get('current_rfp_fully_allocated', False)
+        if disabled_controls:
+            st.info("Matching and assignment controls are disabled because the project is fully allocated.")
+
+        if ac1.button("Find Matching Candidates", use_container_width=True, type="primary", disabled=disabled_controls):
             with st.spinner("Finding best matches..."):
                 try:
                     from matching_engine import MatchingEngine
@@ -380,7 +457,7 @@ def render_rfp():
                 st.markdown("---")
                 prc, asc = st.columns([1,1])
 
-                if prc.button("Preview Allocation for Selected", use_container_width=True):
+                if prc.button("Preview Allocation for Selected", use_container_width=True, disabled=disabled_controls):
                     selected_ids = st.session_state.get('selected_candidates', [])
                     if not selected_ids:
                         st.warning("No candidates selected for preview.")
@@ -396,32 +473,66 @@ def render_rfp():
                                 for w in warnings:
                                     st.warning(w)
 
-                if asc.button("Assign Selected Candidates", use_container_width=True, type="primary"):
+                if asc.button("Assign Selected Candidates", use_container_width=True, type="primary", disabled=disabled_controls):
                     selected_ids = st.session_state.get('selected_candidates', [])
                     if not selected_ids:
                         st.error("No candidates selected. Please select at least one candidate to assign.")
                     else:
-                        with st.spinner("Assigning selected candidates..."):
-                            try:
-                                service = PipelineService()
-                                rfp_id_for_assign = rfp.get('entity_id') or rfp.get('title')
-                                # Always force assignment from UI selection (do not rely on assignment_probability)
-                                result = service.assign_selected_candidates_for_rfp(rfp_id_for_assign, selected_ids, force=True)
-                                st.success("Assignments saved.")
-                                # Show returned assignments if present
-                                if isinstance(result, dict) and result.get('assignments'):
-                                    st.table(result.get('assignments'))
-                                # Refresh matches to reflect updated availability
+                        if st.session_state.get('current_rfp_fully_allocated'):
+                            st.error("Cannot assign: project already fully allocated (100%).")
+                        else:
+                            with st.spinner("Assigning selected candidates..."):
                                 try:
-                                    from matching_engine import MatchingEngine
-                                    engine = MatchingEngine()
-                                    new_matches = engine.rank_candidates(rfp.get('entity_id') or rfp.get('title'), top_n=10)
-                                    st.session_state['current_matches'] = new_matches
-                                    st.session_state['selected_candidates'] = []
-                                except Exception:
-                                    pass
-                            except Exception as e:
-                                st.error(f"Error during assignment: {e}")
+                                    service = PipelineService()
+                                    rfp_id_for_assign = rfp.get('entity_id') or rfp.get('title')
+                                    # Always force assignment from UI selection (do not rely on assignment_probability)
+                                    result = service.assign_selected_candidates_for_rfp(rfp_id_for_assign, selected_ids, force=True)
+                                    st.success("Assignments saved.")
+                                    # Refresh and show current assignments for this project's RFP from DB
+                                    try:
+                                        rfp_lookup = rfp.get('entity_id') or rfp.get('id') or rfp.get('title')
+                                        proj_q = """
+                                        MATCH (r:RFP)
+                                        WHERE r.id = $rfp_id OR r.entity_id = $rfp_id OR r.title = $rfp_id
+                                        OPTIONAL MATCH (r)-[:GENERATES]->(pr:Project)
+                                        OPTIONAL MATCH (p:Person)-[a:ASSIGNED_TO]->(pr)
+                                        RETURN pr.id as project_id, pr.name as project_name, collect({person_name: p.name, allocation_percentage: a.allocation_percentage, start_date: a.start_date, end_date: a.end_date}) as assignments
+                                        LIMIT 1
+                                        """
+                                        proj_res = graph.query(proj_q, {"rfp_id": rfp_lookup})
+                                        rows = []
+                                        if proj_res and proj_res[0].get('assignments'):
+                                            rows = proj_res[0].get('assignments') or []
+
+                                        if rows:
+                                            st.markdown("### ✅ Current Project Assignments")
+                                            # Normalize keys for display
+                                            display_rows = []
+                                            for a in rows:
+                                                display_rows.append({
+                                                    "person_name": a.get('person_name') or a.get('person') or a.get('programmer_name'),
+                                                    "allocation_percentage": a.get('allocation_percentage') or a.get('allocation') or a.get('proposed_allocation'),
+                                                    "start_date": a.get('start_date'),
+                                                    "end_date": a.get('end_date')
+                                                })
+                                            st.table(sanitize_for_display(display_rows))
+                                        else:
+                                            st.info("No assignments recorded for this project yet.")
+                                    except Exception:
+                                        # fallback: show returned assignments if present
+                                        if isinstance(result, dict) and result.get('assignments'):
+                                            st.table(sanitize_for_display(result.get('assignments')))
+                                    # Refresh matches to reflect updated availability
+                                    try:
+                                        from matching_engine import MatchingEngine
+                                        engine = MatchingEngine()
+                                        new_matches = engine.rank_candidates(rfp.get('entity_id') or rfp.get('title'), top_n=10)
+                                        st.session_state['current_matches'] = new_matches
+                                        st.session_state['selected_candidates'] = []
+                                    except Exception:
+                                        pass
+                                except Exception as e:
+                                    st.error(f"Error during assignment: {e}")
             else:
                 st.info("No matching candidates found.")
         

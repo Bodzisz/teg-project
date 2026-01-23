@@ -37,5 +37,6 @@ dependencies = [
     "weasyprint>=66.0",
     "scikit-learn>=1.6.1",
     "pytest>=9.0.2",
+    "langgraph>=0.5.4",
 ]
 

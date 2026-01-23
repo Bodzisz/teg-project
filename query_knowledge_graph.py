@@ -19,6 +19,28 @@ import logging
 from langchain_neo4j import Neo4jGraph, GraphCypherQAChain
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts.prompt import PromptTemplate
+from langgraph.graph import StateGraph, START, END
+from typing import TypedDict, Annotated, List, Dict, Any, Optional
+import operator
+
+class AgentState(TypedDict):
+    original_query: str
+    chat_history: str
+    
+    # Coordinator -> Planner
+    coordinator_feedback: str   # Why are we planning?
+    
+    # Planner -> Querier
+    current_plan_step: str      # Specific Cypher-friendly question
+    
+    # Querier -> Coordinator
+    latest_query_result: Dict   # Result of the last execution
+    
+    # Accumulator
+    gathered_info: List[Dict]   # History of all findings
+    
+    final_answer: str
+    iterations: int
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -36,6 +58,7 @@ class CVGraphRAGSystem:
         """Initialize the GraphRAG system."""
         self.setup_neo4j()
         self.setup_qa_chain()
+        self.setup_workflow()
         self.load_example_queries()
         self.chat_histories = {}  # Store conversation histories in memory
 
@@ -144,10 +167,216 @@ Helpful Answer:"""
             cypher_prompt=CYPHER_GENERATION_PROMPT,
             qa_prompt=CYPHER_QA_PROMPT,
             return_intermediate_steps=True,
+            return_direct=False, # We want the QA chain to interpret results
             allow_dangerous_requests=True  # Allow DELETE operations for demo
         )
 
         logger.info("✓ GraphCypher QA chain initialized with custom prompts")
+
+    def setup_workflow(self):
+        """Setup the LangGraph workflow with Coordinator-Planner-Querier architecture."""
+        
+        # --- Prompts ---
+        
+        COORDINATOR_TEMPLATE = """You are the Coordinator of a knowledge graph querying system. 
+Your goal is to answer the user's `original_query` using the `gathered_info`.
+
+Original Query: {original_query}
+Chat History: {chat_history}
+Gathered Information: {gathered_info}
+Last Query Result: {latest_query_result}
+
+Instructions:
+1. Analyze the `gathered_info` and `latest_query_result`.
+2. Determine if you have enough information to answer the `original_query` comprehensively.
+3. If yes, output `NEXT: FINISH` followed by the final answer.
+4. If no, output `NEXT: PLAN` followed by feedback/instructions for the Planner.
+
+Important:
+- If `latest_query_result` contains a list of entities in `context` (e.g. `['name': 'Alice']`), TRUST IT.
+- If the query was "Find people with skill X" and you got a list of people, that IS the answer. Do not ask to "verify" their skills unless explicitly requested.
+- If the answer is "I don't know" or empty, then ask for a retrial with a broader strategy.
+
+Response Format:
+NEXT: [FINISH or PLAN]
+[Reasoning or Final Answer]"""
+
+        COORDINATOR_PROMPT = PromptTemplate(
+            input_variables=["original_query", "chat_history", "gathered_info", "latest_query_result"],
+            template=COORDINATOR_TEMPLATE
+        )
+
+        PLANNER_TEMPLATE = """You are the Planner. Your job is to formulate a SINGLE, SPECIFIC natural language question for the Graph Querier.
+        
+Original Query: {original_query}
+Coordinator Feedback: {coordinator_feedback}
+
+Schema Overview:
+- Nodes: Person, Skill, Company, Project, Certification, University, RFP
+- Relationships: HAS_SKILL, WORKED_AT, WORKED_ON, EARNED, STUDIED_AT, NEEDS
+- Properties: names are usually 'id' or 'name'. Skills are single words.
+
+Strategies:
+- **Concept Expansion**: If the feedback mentions a broad role (e.g. "Frontend"), create a query checking for specific skills (React, Vue, JS).
+- **Simplification**: If the previous query was too complex, break it down.
+- **Variation**: If the previous query returned 0, try synonyms or less restrictive conditions.
+
+Output ONLY the new specific question to ask the graph."""
+
+        PLANNER_PROMPT = PromptTemplate(
+            input_variables=["original_query", "coordinator_feedback"],
+            template=PLANNER_TEMPLATE
+        )
+
+        # --- Nodes ---
+
+        def coordinator_node(state: AgentState) -> AgentState:
+            """Decide next step based on state."""
+            original_query = state["original_query"]
+            chat_history = state.get("chat_history", "")
+            gathered_info = state.get("gathered_info", [])
+            latest_result = state.get("latest_query_result", {})
+            iterations = state.get("iterations", 0)
+            
+            # Safety break
+            if iterations > 5:
+                # Ask LLM to summarize partial results
+                cleanup_prompt = f"""You are the Coordinator. The system has reached its maximum iteration limit.
+                
+Original Query: {original_query}
+Gathered Information: {gathered_info}
+
+Task:
+1. Summarize clearly what information was found (from the Gathered Information).
+2. State clearly what information is still missing or could not be verified.
+3. Be polite and concise.
+4. Format the response nicely as a natural language answer. Do NOT show raw JSON structures."""
+                
+                try:
+                    response = self.llm.invoke(cleanup_prompt).content.strip()
+                except:
+                    response = "I couldn't complete the request in time. Please try a more specific query."
+                    
+                return {
+                    "final_answer": response,
+                    "iterations": iterations
+                }
+
+            formatted_prompt = COORDINATOR_PROMPT.format(
+                original_query=original_query,
+                chat_history=chat_history,
+                gathered_info=str(gathered_info),
+                latest_query_result=str(latest_result)
+            )
+
+            try:
+                response = self.llm.invoke(formatted_prompt).content.strip()
+                
+                if response.startswith("NEXT: FINISH"):
+                    final_answer = response.replace("NEXT: FINISH", "").strip()
+                    return {"final_answer": final_answer, "iterations": iterations}
+                
+                elif response.startswith("NEXT: PLAN"):
+                    feedback = response.replace("NEXT: PLAN", "").strip()
+                    logger.info(f"Coordinator Feedback: {feedback}")
+                    return {"coordinator_feedback": feedback, "iterations": iterations + 1}
+                
+                else:
+                    # Fallback
+                    return {"coordinator_feedback": "Please continue searching.", "iterations": iterations + 1}
+                    
+            except Exception as e:
+                logger.error(f"Coordinator error: {e}")
+                return {"final_answer": "Error in coordination.", "iterations": iterations}
+
+        def planner_node(state: AgentState) -> AgentState:
+            """Formulate the next query."""
+            original_query = state["original_query"]
+            feedback = state.get("coordinator_feedback", "")
+            
+            formatted_prompt = PLANNER_PROMPT.format(
+                original_query=original_query,
+                coordinator_feedback=feedback
+            )
+            
+            try:
+                plan_step = self.llm.invoke(formatted_prompt).content.strip()
+                logger.info(f"Planned step: {plan_step}")
+                return {"current_plan_step": plan_step}
+            except Exception as e:
+                logger.error(f"Planner error: {e}")
+                return {"current_plan_step": original_query} # Fallback to original
+
+        def graph_querier_node(state: AgentState) -> AgentState:
+            """Execute the planned query."""
+            question = state["current_plan_step"]
+            chat_history = state.get("chat_history", "")
+            
+            try:
+                # Reuse the existing QA chain
+                result = self.qa_chain.invoke({
+                    "query": question,
+                    "chat_history": chat_history
+                })
+                
+                answer = result.get("result", "No answer")
+                steps = result.get("intermediate_steps", [])
+                cypher = steps[0].get("query", "") if steps else ""
+                context = steps[1].get("context", []) if len(steps) > 1 else []
+                
+                query_result = {
+                    "asked": question,
+                    "cypher": cypher,
+                    "context": context,
+                    "answer": answer
+                }
+                
+                # Update gathered info
+                new_gathered = state.get("gathered_info", []) + [query_result]
+                
+                return {
+                    "latest_query_result": query_result,
+                    "gathered_info": new_gathered
+                }
+                
+            except Exception as e:
+                error_result = {"asked": question, "error": str(e)}
+                new_gathered = state.get("gathered_info", []) + [error_result]
+                return {
+                    "latest_query_result": error_result,
+                    "gathered_info": new_gathered
+                }
+
+        def check_finish(state: AgentState) -> str:
+            if state.get("final_answer"):
+                return "finish"
+            return "continue"
+
+        # --- Graph Construction ---
+        workflow = StateGraph(AgentState)
+        
+        workflow.add_node("coordinator", coordinator_node)
+        workflow.add_node("planner", planner_node)
+        workflow.add_node("graph_querier", graph_querier_node)
+        
+        # Start at Coordinator
+        workflow.add_edge(START, "coordinator")
+        
+        # Coordinator decides to End or Plan
+        workflow.add_conditional_edges(
+            "coordinator",
+            check_finish,
+            {
+                "finish": END,
+                "continue": "planner"
+            }
+        )
+        
+        workflow.add_edge("planner", "graph_querier")
+        workflow.add_edge("graph_querier", "coordinator")
+        
+        self.app = workflow.compile()
+        logger.info("✓ LangGraph workflow initialized (Coordinator-Planner-Querier)")
 
     def load_example_queries(self):
         """Load example queries that demonstrate GraphRAG capabilities for CV data."""
@@ -257,23 +486,35 @@ Helpful Answer:"""
             chat_history_str = "\n".join([f"Human: {q}\nAI: {a}" for q, a in history_list]) if history_list else "No history."
 
         try:
-            logger.info(f"Executing query: {question}")
+            logger.info(f"Executing query via LangGraph Coordinator: {question}")
 
-            # Execute the query
-            result = self.qa_chain.invoke({
-                "query": question,
-                "chat_history": chat_history_str
-            })
+            initial_state = {
+                "original_query": question,
+                "chat_history": chat_history_str,
+                "coordinator_feedback": "Initial request",
+                "gathered_info": [],
+                "iterations": 0,
+                "final_answer": ""
+            }
+            
+            # Run the workflow
+            final_state = self.app.invoke(initial_state)
 
-            # Extract components
+            # Extract results
             response = {
                 "question": question,
-                "answer": result.get("result", "No answer generated"),
-                "cypher_query": result.get("intermediate_steps", [{}])[0].get("query", ""),
-                "cypher_query": result.get("intermediate_steps", [{}])[0].get("query", ""),
+                "answer": final_state.get("final_answer", "No answer"),
                 "conversation_id": conversation_id,
-                "success": True
+                "success": True if final_state.get("final_answer") and "Error" not in final_state.get("final_answer") else False
             }
+            
+            # Add simplified cypher query field for compatibility with UI
+            # We take the cypher from the LAST gathered info if available
+            gathered = final_state.get("gathered_info", [])
+            if gathered:
+                response["cypher_query"] = gathered[-1].get("cypher", "")
+            else:
+                response["cypher_query"] = ""
             
             # Update history with success only if conversation_id exists
             if conversation_id:

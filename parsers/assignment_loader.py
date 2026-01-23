@@ -494,6 +494,108 @@ class AssignmentLoader:
         logger.info(f"✅ Completed assignments for {len(projects)} projects, created {len(assignments)} assignments")
         return assignments
 
+    def assign_candidates_to_single_project(self, project_id: str) -> List[Dict[str, Any]]:
+        """
+        Assigns programmers to a single project based on RFP matches.
+        """
+        # Load the project
+        project_query = """
+        MATCH (p:Project)
+        WHERE p.id = $project_id OR p.entity_id = $project_id
+        RETURN p.id as id, p.name as name, p.start_date as start_date, p.end_date as end_date, p.team_size as team_size
+        """
+        project_result = self.graph.query(project_query, {"project_id": project_id})
+        if not project_result:
+            logger.warning(f"Project {project_id} not found")
+            return []
+        project = project_result[0]
+
+        assignments = []
+
+        # Find the RFP that generated this project
+        rfp_query = """
+        MATCH (r:RFP)-[:GENERATES]->(p:Project)
+        WHERE p.id = $project_id OR p.entity_id = $project_id
+        RETURN r.id as rfp_id, r.title as rfp_title
+        """
+        rfp_result = self.graph.query(rfp_query, {"project_id": project_id})
+        if not rfp_result:
+            logger.warning(f"No originating RFP found for project {project_id}")
+            return []
+        rfp_id = rfp_result[0]["rfp_id"]
+        logger.info(f"Found originating RFP: {rfp_id} for project {project_id}")
+
+        # Retrieve top-ranked candidates from MATCHED_TO for this RFP
+        match_query = """
+        MATCH (person:Person)-[m:MATCHED_TO]->(r:RFP {id: $rfp_id})
+        RETURN person.name as person_name, person.name as person_id, m.score as score, m.mandatory_met as mandatory_met
+        ORDER BY m.score DESC
+        """
+        candidates = self.graph.query(match_query, {"rfp_id": rfp_id})
+
+        if not candidates:
+            logger.warning(f"No matched candidates found for RFP {rfp_id} (project {project_id})")
+            return []
+
+        # Check programmer availability (relaxed threshold)
+        available_candidates = []
+        for candidate in candidates:
+            person_id = candidate["person_id"]
+            availability = self.calculate_availability(person_id)
+            if availability > 10:  # Relaxed threshold
+                available_candidates.append({
+                    "person_id": person_id,
+                    "person_name": candidate["person_name"],
+                    "score": candidate["score"],
+                    "mandatory_met": candidate.get("mandatory_met", False),
+                    "availability": availability
+                })
+            else:
+                logger.info(f"Candidate {candidate['person_name']} excluded due to low availability ({availability}%)")
+
+        if not available_candidates:
+            logger.warning(f"No available candidates for project {project_id} (RFP {rfp_id})")
+            return []
+
+        # Prioritize candidates who met mandatory requirements
+        mandatory_candidates = [c for c in available_candidates if c["mandatory_met"]]
+        if mandatory_candidates:
+            available_candidates = mandatory_candidates
+            logger.info(f"Prioritizing {len(mandatory_candidates)} candidates who met mandatory requirements for project {project_id}")
+
+        # Take top candidates up to team_size
+        top_candidates = available_candidates[:project["team_size"]]
+
+        if not top_candidates:
+            logger.warning(f"No top candidates selected for project {project_id} (team_size: {project['team_size']})")
+            return []
+
+        # Distribute allocation dynamically based on availability
+        total_available = sum(c["availability"] for c in top_candidates)
+        for candidate in top_candidates:
+            if total_available > 0:
+                allocation_percentage = min(candidate["availability"], (candidate["availability"] / total_available) * 100)
+            else:
+                allocation_percentage = 100 // len(top_candidates)
+
+            logger.info(f"Assigned {candidate['person_name']} to {project['name']} with {allocation_percentage:.1f}% allocation")
+
+            assignments.append({
+                "person_name": candidate["person_name"],
+                "project_title": project["name"],
+                "allocation_percentage": round(allocation_percentage, 1),
+                "start_date": str(project["start_date"]),
+                "end_date": str(project["end_date"]) if project["end_date"] else None
+            })
+
+            # Update availability in real-time
+            new_availability = candidate["availability"] - allocation_percentage
+            self.update_graph_with_availability(candidate["person_id"], max(0, int(new_availability)))
+
+        logger.info(f"✅ Completed assignments for project {project_id}, created {len(assignments)} assignments")
+        return assignments
+
+
     def save_assignments_to_neo4j(self, assignments_summary: List[Dict[str, Any]]):
         """
         Saves the assignments to Neo4j by creating ASSIGNED_TO relationships.

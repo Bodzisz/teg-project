@@ -1,5 +1,6 @@
 import logging
 from comprehensive_pipeline import GraphPipeline
+from parsers.assignment_loader import AssignmentLoader
 
 class PipelineService:
     def __init__(self):
@@ -9,12 +10,14 @@ class PipelineService:
         try:
             logger = logging.getLogger("PipelineService")
             logger.info("🔍 Stage 4: Assigning programmers to Projects...")
-            programmers = self.pipeline.assignment_loader.load_programmers_from_graph()
+            # Ensure assignment_loader is available
+            assignment_loader = self.pipeline.assignment_loader or AssignmentLoader(config_path="utils/config.toml")
+            programmers = assignment_loader.load_programmers_from_graph()
             for p in programmers:
-                availability = self.pipeline.assignment_loader.calculate_availability(p.id)
-                self.pipeline.assignment_loader.update_graph_with_availability(p.id, availability)
-            assignments_summary = self.pipeline.assignment_loader.assign_candidates_to_single_project(project_id)
-            self.pipeline.assignment_loader.save_assignments_to_neo4j(assignments_summary)
+                availability = assignment_loader.calculate_availability(p.id)
+                assignment_loader.update_graph_with_availability(p.id, availability)
+            assignments_summary = assignment_loader.assign_candidates_to_single_project(project_id)
+            assignment_loader.save_assignments_to_neo4j(assignments_summary)
 
             return assignments_summary
         except Exception as e:
@@ -26,7 +29,8 @@ class PipelineService:
             MATCH (p:Project)<-[:GENERATES]-(r:RFP {id: $rfp_id})
             RETURN p.id as id, p.name as name
             """
-            existing_project = self.pipeline.assignment_loader.graph.query(project_query, {"rfp_id": rfp_id})
+            assignment_loader = self.pipeline.assignment_loader or AssignmentLoader(config_path="utils/config.toml")
+            existing_project = assignment_loader.graph.query(project_query, {"rfp_id": rfp_id})
             if existing_project:
                 project_id = existing_project[0]["id"]
             else:
@@ -35,16 +39,16 @@ class PipelineService:
             # If force is set, temporarily bump assignment probability to 1.0
             if force:
                 try:
-                    self.pipeline.assignment_loader.config.setdefault("assignment", {})["assignment_probability"] = 1.0
+                    assignment_loader.config.setdefault("assignment", {})["assignment_probability"] = 1.0
                 except Exception:
                     pass
 
-            programmers = self.pipeline.assignment_loader.load_programmers_from_graph()
+            programmers = assignment_loader.load_programmers_from_graph()
             for p in programmers:
-                availability = self.pipeline.assignment_loader.calculate_availability(p.id)
-                self.pipeline.assignment_loader.update_graph_with_availability(p.id, availability)
-            assignments_summary = self.pipeline.assignment_loader.assign_candidates_to_single_project(project_id)
-            self.pipeline.assignment_loader.save_assignments_to_neo4j(assignments_summary)
+                availability = assignment_loader.calculate_availability(p.id)
+                assignment_loader.update_graph_with_availability(p.id, availability)
+            assignments_summary = assignment_loader.assign_candidates_to_single_project(project_id)
+            assignment_loader.save_assignments_to_neo4j(assignments_summary)
             return {"project_id": project_id, "assignments": assignments_summary}
         except Exception as e:
             raise
@@ -75,8 +79,9 @@ class PipelineService:
 
             # Refresh availability for selected persons (read-only here)
             avail_map = {}
+            assignment_loader = self.pipeline.assignment_loader or AssignmentLoader(config_path="utils/config.toml")
             for pid in selected_person_ids:
-                avail = self.pipeline.assignment_loader.calculate_availability(pid)
+                avail = assignment_loader.calculate_availability(pid)
                 # do NOT persist this refresh yet — avoid changing graph unless we create an assignment
                 avail_map[pid] = avail
 
@@ -89,7 +94,7 @@ class PipelineService:
                 OPTIONAL MATCH (p:Person)-[a:ASSIGNED_TO]->(pr)
                 RETURN collect({person_name: p.name, allocation_percentage: a.allocation_percentage, start_date: a.start_date, end_date: a.end_date}) as assignments
                 """
-                exist_res = self.pipeline.assignment_loader.graph.query(exist_q, {"project_id": project_id})
+                exist_res = assignment_loader.graph.query(exist_q, {"project_id": project_id})
                 if exist_res:
                     existing_assignments = exist_res[0].get("assignments") or []
             except Exception:
@@ -156,7 +161,7 @@ class PipelineService:
 
                 # Update person's availability immediately in graph
                 new_avail = max(0, int(avail_map.get(pid, 0) - allocation))
-                self.pipeline.assignment_loader.update_graph_with_availability(pid, new_avail)
+                assignment_loader.update_graph_with_availability(pid, new_avail)
 
                 # Compose assignment record consistent with save_assignments_to_neo4j
                 assignments.append({
@@ -169,7 +174,7 @@ class PipelineService:
 
             # Persist assignments
             if assignments:
-                self.pipeline.assignment_loader.save_assignments_to_neo4j(assignments)
+                assignment_loader.save_assignments_to_neo4j(assignments)
 
             return {"project_id": project_id, "assignments": assignments}
         except Exception as e:

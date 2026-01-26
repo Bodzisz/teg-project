@@ -1,83 +1,138 @@
 ### TEG Project
 
-[Opis projektu](https://github.com/wodecki/TEG_2025/blob/main/src/3.%20Retrieval%20Augmented%20Generation/07_Your_Project_TalentMatch/PRD.md)
+[Project description](https://github.com/wodecki/TEG_2025/blob/main/src/3.%20Retrieval%20Augmented%20Generation/07_Your_Project_TalentMatch/PRD.md)
 
-## Docker
 
-### Przydatne komendy Dockera
+This repository contains the Talent Matcher project (TEG). It provides tools to
+ingest CVs and RFPs into Neo4j, rank candidates for RFPs, and assign programmers
+to projects. The web UI uses Streamlit for interactive workflows.
 
-Otwórz terminal w tym samym katalogu, w którym znajduje się plik `docker-compose.yml`, i uruchom te polecenia.
+## Quicklinks
 
-- **Uruchom kontener:**
-
-  ```bash
-  docker-compose up -d
-  ```
-
-  Flaga `-d` uruchamia go w trybie "detached" (w tle).
-
-- **Sprawdź działające kontenery:**
-
-  ```bash
-  docker ps
-  ```
-
-  Powinieneś zobaczyć na liście swój kontener `neo4j`. Flaga `a` pokaże wszystkie kontenery, w tym zatrzymane.
-
-- **Wyświetl logi kontenera:**
-
-  ```bash
-  docker-compose logs -f neo4j
-  ```
-
-  To polecenie pokazuje na żywo dane wyjściowe z serwera Neo4j, co jest przydatne do debugowania. Naciśnij `Ctrl+C`, aby zatrzymać śledzenie.
-
-- **Zatrzymaj i usuń kontener:**
-
-  ```bash
-  docker-compose down
-  ```
-
-  To polecenie zatrzymuje i usuwa kontener, ale Twoje dane są bezpieczne, ponieważ użyłeś wolumenów.
+- Source RFP/Projects/CVs: `data/`
+- Pipeline loader: `comprehensive_pipeline.py` (loads CVs and RFPs into Neo4j)
+- Streamlit UI: `streamlit_app.py`
 
 ---
 
-## Neo4j
+## Docker
 
-1.  **Uzyskaj dostęp do Neo4j Browser:**
-    Gdy kontener jest uruchomiony, otwórz przeglądarkę internetową i przejdź pod adres **`http://localhost:7474`**.
+We use Docker Compose to run a local Neo4j instance. From the repository root (where
+`docker-compose.yml` is located) run:
 
-2.  **Zaloguj się:**
-    Zobaczysz ekran logowania. Użyj passów, które ustawiłeś w pliku `docker-compose.yml` i jesteś gotów do uruchamiania zapytań Cypher\!
+```bash
+docker-compose up -d
+```
 
-### Uruchamianie poleceń wewnątrz kontenera
+To list running containers:
 
-Czasami trzeba uruchomić polecenia administracyjne bezpośrednio.
+```bash
+docker ps
+```
 
-1.  **Wejdź do powłoki kontenera:**
-    To polecenie daje Ci dostęp do wiersza poleceń `bash` wewnątrz działającego kontenera `neo4j`.
+To follow Neo4j logs:
 
-    ```bash
-    docker exec -it neo4j bash
-    ```
+```bash
+docker-compose logs -f neo4j
+```
 
-2.  **Użyj narzędzi Neo4j:**
-    Teraz, gdy jesteś "w środku" kontenera, możesz używać wbudowanych narzędzi wiersza poleceń Neo4j.
+To stop and remove the containers:
 
-    - **Sprawdź status bazy danych:** Użyj narzędzia `neo4j-admin`, aby sprawdzić, czy baza danych działa.
+```bash
+docker-compose down
+```
 
-      ```bash
-      neo4j-admin dbms status
-      ```
+Note: the Neo4j data is stored in a Docker volume defined in `docker-compose.yml`.
 
-    - **Użyj Cypher Shell:** To interfejs wiersza poleceń do uruchamiania zapytań.
+---
 
-      ```bash
-      # Uruchom powłokę i zaloguj się
-      cypher-shell -u neo4j -p password
+## Neo4j Browser
 
-      # Wykonaj twoje zapytanie Cypher
+Once the Neo4j container is running, open the browser at:
 
-      # Aby wyjść z Cypher Shell, wpisz:
-      :exit
-      ```
+```
+http://localhost:7474
+```
+
+Log in with the username/password you configured in `docker-compose.yml`.
+
+You can also run Cypher commands from the container:
+
+```bash
+docker exec -it <neo4j_container_name> bash
+cypher-shell -u <user> -p <password>
+# then run Cypher queries, exit with :exit
+```
+
+---
+
+## Load data from `data/` into Neo4j
+
+The repository includes a pipeline script that processes CVs and RFP PDFs and
+creates nodes and relationships in Neo4j. To load data into the running Neo4j
+instance, do the following:
+
+1. Use the `uv` package manager to create an environment and install dependencies from `pyproject.toml`.
+
+```bash
+# Install uv if you don't have it (global install)
+python -m pip install --user uv
+
+# Sync dependencies and create the project environment
+uv sync
+```
+
+`uv sync` creates an isolated virtual environment and installs the packages
+from `pyproject.toml`. After that, run commands inside the environment with
+`uv run`.
+
+2. Run the comprehensive pipeline to process CVs and RFPs into Neo4j. By
+  default the pipeline only loads CVs and RFPs (matching and assignments are
+  handled interactively through the Streamlit UI):
+
+```bash
+uv run python comprehensive_pipeline.py --config utils/config.toml
+```
+
+
+---
+
+## Run the Streamlit UI
+
+Start the Streamlit app from the repository root:
+
+```bash
+uv run streamlit run streamlit_app.py
+```
+
+Open the provided local URL (usually `http://localhost:8501`) in your browser.
+
+The Streamlit UI exposes buttons to run matching and assignments once you have
+ingested data and selected a target RFP.
+
+---
+
+## Unit tests (pytest)
+
+There are unit tests that verify matching and assignment logic. Tests mock the
+Neo4j connection and scoring components, so a running Neo4j instance is not
+required to run the tests.
+
+1. Make sure you ran `uv sync` to create the project environment (see above).
+
+2. Run the test suite from the repository root:
+
+```bash
+uv run python -m pytest -q
+```
+
+---
+
+## Notes and troubleshooting
+
+- If imports for `langchain_neo4j` or other third-party libraries fail during
+  tests, the unit tests include light mocks so tests can run without the
+  service dependencies.
+- Adjust `utils/config.toml` to point to your Neo4j connection settings if
+  the defaults do not match your environment.
+

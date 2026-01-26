@@ -38,5 +38,6 @@ dependencies = [
     "scikit-learn>=1.6.1",
     "pytest>=9.0.2",
     "langgraph>=0.5.4",
+    "streamlit>=1.53.1",
 ]
 

@@ -58,6 +58,11 @@ class PipelineService:
         This implements the equal-split + cap-by-availability + round-robin redistribution logic.
         """
         try:
+            # Ensure assignment_loader is available
+            assignment_loader = self.pipeline.assignment_loader or AssignmentLoader(config_path="utils/config.toml")
+            if assignment_loader.graph is None:
+                assignment_loader.graph = self.pipeline.cv_builder.graph
+            
             # Ensure project exists for this RFP
             project_query = """
             MATCH (p:Project)<-[:GENERATES]-(r:RFP {id: $rfp_id})
@@ -79,7 +84,6 @@ class PipelineService:
 
             # Refresh availability for selected persons (read-only here)
             avail_map = {}
-            assignment_loader = self.pipeline.assignment_loader or AssignmentLoader(config_path="utils/config.toml")
             for pid in selected_person_ids:
                 avail = assignment_loader.calculate_availability(pid)
                 # do NOT persist this refresh yet — avoid changing graph unless we create an assignment

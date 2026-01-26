@@ -1,6 +1,5 @@
 import sys
 import types
-import pytest
 from unittest.mock import patch
 
 # Provide minimal fake modules so importing the production modules doesn't fail

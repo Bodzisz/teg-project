@@ -191,7 +191,9 @@ class RFPParser:
             existing = self.graph.query(check_query, {"project_id": f"PRJ-{rfp_id}"})
             if existing:
                 logger.info(f"Project PRJ-{rfp_id} already exists.")
-                return {"id": f"PRJ-{rfp_id}"}
+                # return both id and name for downstream callers
+                p = existing[0].get("p") or {}
+                return {"id": f"PRJ-{rfp_id}", "name": p.get("name")}
 
             # Get RFP data
             rfp_query = """
@@ -251,7 +253,7 @@ class RFPParser:
                 "requirements": requirements
             })
             logger.info(f"✅ Project PRJ-{rfp_id} created from RFP {rfp_id}.")
-            return {"id": f"PRJ-{rfp_id}"}
+            return {"id": f"PRJ-{rfp_id}", "name": rfp.get("title")}
         except Exception as e:
             logger.error("❌ Failed to create Project from RFP: %s", e)
             return None

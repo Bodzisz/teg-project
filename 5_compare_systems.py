@@ -92,7 +92,7 @@ class SystemComparator:
         try:
             # Import the GraphRAG system dynamically
             spec = importlib.util.spec_from_file_location(
-                "graph_rag_module", "3_query_knowledge_graph.py"
+                "graph_rag_module", "query_knowledge_graph.py"
             )
             graph_rag_module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(graph_rag_module)
@@ -132,16 +132,40 @@ class SystemComparator:
     def run_graph_rag_query(self, question: str) -> Dict[str, Any]:
         """Run a query through the GraphRAG system."""
         try:
+            # Try both simple graph query and agent (advanced) query if available
             start_time = time.time()
-            result = self.graph_rag_system.query_graph(question)
+
+            # Simple GraphRAG query (preferred method name: query_graph_simple)
+            simple_start = time.time()
+            if hasattr(self.graph_rag_system, "query_graph_simple"):
+                simple_res = self.graph_rag_system.query_graph_simple(question) or {}
+            elif hasattr(self.graph_rag_system, "query_graph"):
+                # Backwards-compatible fallback
+                simple_res = self.graph_rag_system.query_graph(question) or {}
+            else:
+                simple_res = {"answer": "GraphRAG simple query not available", "cypher_query": "", "success": False}
+            simple_time = time.time() - simple_start
+
+            # Agent RAG query (advanced multi-step reasoning)
+            agent_start = time.time()
+            if hasattr(self.graph_rag_system, "query_graph_agent"):
+                agent_res = self.graph_rag_system.query_graph_agent(question) or {}
+            else:
+                agent_res = {"answer": "Agent RAG not available", "cypher_query": "", "success": False}
+            agent_time = time.time() - agent_start
+
             execution_time = time.time() - start_time
 
             return {
                 "question": question,
-                "answer": result.get("answer", "No answer"),
-                "cypher_query": result.get("cypher_query", ""),
+                "answer_simple": simple_res.get("answer", "No answer"),
+                "answer_agent": agent_res.get("answer", "No answer"),
+                "cypher_query": simple_res.get("cypher_query", "") or agent_res.get("cypher_query", ""),
                 "execution_time": execution_time,
-                "success": result.get("success", False),
+                "simple_time": simple_time,
+                "agent_time": agent_time,
+                "success_simple": simple_res.get("success", False),
+                "success_agent": agent_res.get("success", False),
                 "system": "graphrag"
             }
 
@@ -282,20 +306,23 @@ class SystemComparator:
 
             logger.info(f"\n[{i+1}/{len(questions)}] Processing: {question[:50]}...")
 
-            # Run GraphRAG query
-            logger.info("  Running GraphRAG...")
+            # Run GraphRAG simple + agent queries
+            logger.info("  Running GraphRAG (simple + agent)...")
             graph_result = self.run_graph_rag_query(question)
 
             # Run Naive RAG query
             logger.info("  Running Naive RAG...")
             naive_result = self.run_naive_rag_query(question)
 
-            # Evaluate both answers
+            # Evaluate answers for simple GraphRAG, Agent RAG and Naive RAG
             graph_evaluation = self.evaluate_answer_quality(
-                ground_truth_answer, graph_result["answer"], category
+                ground_truth_answer, graph_result.get("answer_simple", ""), category
+            )
+            agent_evaluation = self.evaluate_answer_quality(
+                ground_truth_answer, graph_result.get("answer_agent", ""), category
             )
             naive_evaluation = self.evaluate_answer_quality(
-                ground_truth_answer, naive_result["answer"], category
+                ground_truth_answer, naive_result.get("answer", ""), category
             )
 
             # Compile comparison
@@ -306,12 +333,20 @@ class SystemComparator:
                 "ground_truth": ground_truth_answer,
 
                 "graphrag": {
-                    "answer": graph_result["answer"],
-                    "cypher_query": graph_result.get("cypher_query", ""),
-                    "execution_time": graph_result["execution_time"],
-                    "success": graph_result["success"],
-                    "evaluation": graph_evaluation
+                        "answer": graph_result.get("answer_simple", ""),
+                        "cypher_query": graph_result.get("cypher_query", ""),
+                        "execution_time": graph_result.get("simple_time", graph_result.get("execution_time", 0)),
+                        "success": graph_result.get("success_simple", False),
+                        "evaluation": graph_evaluation
                 },
+
+                    "agent_rag": {
+                        "answer": graph_result.get("answer_agent", ""),
+                        "execution_time": graph_result.get("agent_time", 0),
+                        "success": graph_result.get("success_agent", False),
+                        "evaluation": agent_evaluation,
+                        "system": "agent_rag"
+                    },
 
                 "naive_rag": {
                     "answer": naive_result["answer"],
@@ -345,10 +380,12 @@ class SystemComparator:
         """Generate summary statistics for the comparison."""
         graph_wins = 0
         naive_wins = 0
+        agent_wins = 0
         ties = 0
 
         graph_quality_scores = []
         naive_quality_scores = []
+        agent_quality_scores = []
 
         category_stats = {}
 
@@ -356,9 +393,11 @@ class SystemComparator:
             category = result["category"]
             graph_score = result["graphrag"]["evaluation"]["quality_score"]
             naive_score = result["naive_rag"]["evaluation"]["quality_score"]
+            agent_score = result.get("agent_rag", {}).get("evaluation", {}).get("quality_score", 0.0)
 
             graph_quality_scores.append(graph_score)
             naive_quality_scores.append(naive_score)
+            agent_quality_scores.append(agent_score)
 
             # Track category performance
             if category not in category_stats:
@@ -366,18 +405,28 @@ class SystemComparator:
                     "total": 0,
                     "graph_wins": 0,
                     "naive_wins": 0,
+                    "agent_wins": 0,
                     "ties": 0
                 }
 
             category_stats[category]["total"] += 1
 
-            # Determine winner
-            if graph_score > naive_score:
-                graph_wins += 1
-                category_stats[category]["graph_wins"] += 1
-            elif naive_score > graph_score:
-                naive_wins += 1
-                category_stats[category]["naive_wins"] += 1
+            # Determine winner among three systems
+            scores = {"graphrag": graph_score, "naive_rag": naive_score, "agent_rag": agent_score}
+            max_score = max(scores.values())
+            winners = [k for k, v in scores.items() if v == max_score]
+
+            if len(winners) == 1:
+                winner = winners[0]
+                if winner == "graphrag":
+                    graph_wins += 1
+                    category_stats[category]["graph_wins"] += 1
+                elif winner == "naive_rag":
+                    naive_wins += 1
+                    category_stats[category]["naive_wins"] += 1
+                else:
+                    agent_wins += 1
+                    category_stats[category]["agent_wins"] += 1
             else:
                 ties += 1
                 category_stats[category]["ties"] += 1
@@ -388,15 +437,19 @@ class SystemComparator:
             "overall_performance": {
                 "graphrag_wins": graph_wins,
                 "naive_rag_wins": naive_wins,
+                "agent_rag_wins": agent_wins,
                 "ties": ties,
-                "graphrag_win_rate": graph_wins / len(results),
-                "naive_rag_win_rate": naive_wins / len(results)
+                "graphrag_win_rate": graph_wins / len(results) if results else 0,
+                "naive_rag_win_rate": naive_wins / len(results) if results else 0,
+                "agent_rag_win_rate": agent_wins / len(results) if results else 0
             },
             "quality_scores": {
-                "graphrag_avg": statistics.mean(graph_quality_scores),
-                "naive_rag_avg": statistics.mean(naive_quality_scores),
-                "graphrag_median": statistics.median(graph_quality_scores),
-                "naive_rag_median": statistics.median(naive_quality_scores)
+                "graphrag_avg": statistics.mean(graph_quality_scores) if graph_quality_scores else 0,
+                "naive_rag_avg": statistics.mean(naive_quality_scores) if naive_quality_scores else 0,
+                "agent_rag_avg": statistics.mean(agent_quality_scores) if agent_quality_scores else 0,
+                "graphrag_median": statistics.median(graph_quality_scores) if graph_quality_scores else 0,
+                "naive_rag_median": statistics.median(naive_quality_scores) if naive_quality_scores else 0,
+                "agent_rag_median": statistics.median(agent_quality_scores) if agent_quality_scores else 0
             },
             "category_breakdown": category_stats
         }
@@ -443,8 +496,8 @@ class SystemComparator:
         # Detailed results table
         table_lines.append("## Detailed Results")
         table_lines.append("")
-        table_lines.append("| # | Question | Category | GraphRAG Answer | Naive RAG Answer | Ground Truth | Winner |")
-        table_lines.append("|---|----------|----------|-----------------|------------------|--------------|--------|")
+        table_lines.append("| # | Question | Category | GraphRAG Answer | Agent RAG Answer | Naive RAG Answer | Ground Truth | Winner |")
+        table_lines.append("|---|----------|----------|-----------------|------------------|------------------|--------------|--------|")
 
         for result in results:
             idx = result["question_index"]
@@ -452,16 +505,19 @@ class SystemComparator:
             category = result["category"]
 
             graph_answer = result["graphrag"]["answer"][:30] + "..." if len(result["graphrag"]["answer"]) > 30 else result["graphrag"]["answer"]
+            agent_answer = result.get("agent_rag", {}).get("answer", "")[:30] + "..." if len(result.get("agent_rag", {}).get("answer", "")) > 30 else result.get("agent_rag", {}).get("answer", "")
             naive_answer = result["naive_rag"]["answer"][:30] + "..." if len(result["naive_rag"]["answer"]) > 30 else result["naive_rag"]["answer"]
             ground_truth = result["ground_truth"][:30] + "..." if len(result["ground_truth"]) > 30 else result["ground_truth"]
 
             graph_score = result["graphrag"]["evaluation"]["quality_score"]
             naive_score = result["naive_rag"]["evaluation"]["quality_score"]
-
-            if graph_score > naive_score:
-                winner = "GraphRAG ✅"
-            elif naive_score > graph_score:
-                winner = "Naive RAG ✅"
+            agent_score = result.get("agent_rag", {}).get("evaluation", {}).get("quality_score", 0.0)
+            # Determine winner among three systems
+            scores = {"GraphRAG": graph_score, "Agent RAG": agent_score, "Naive RAG": naive_score}
+            max_score = max(scores.values())
+            winners = [name for name, sc in scores.items() if sc == max_score]
+            if len(winners) == 1:
+                winner = f"{winners[0]} ✅"
             else:
                 winner = "Tie ⚖️"
 
@@ -471,7 +527,7 @@ class SystemComparator:
             naive_answer = naive_answer.replace("|", "\\|")
             ground_truth = ground_truth.replace("|", "\\|")
 
-            table_lines.append(f"| {idx} | {question} | {category} | {graph_answer} | {naive_answer} | {ground_truth} | {winner} |")
+            table_lines.append(f"| {idx} | {question} | {category} | {graph_answer} | {agent_answer} | {naive_answer} | {ground_truth} | {winner} |")
 
         return "\n".join(table_lines)
 
@@ -491,6 +547,7 @@ class SystemComparator:
 
         print(f"\n🎯 QUALITY SCORES:")
         print(f"GraphRAG Average: {summary['quality_scores']['graphrag_avg']:.2f}")
+        print(f"Agent RAG Average: {summary['quality_scores'].get('agent_rag_avg', 0.0):.2f}")
         print(f"Naive RAG Average: {summary['quality_scores']['naive_rag_avg']:.2f}")
 
         print(f"\n📋 PERFORMANCE BY CATEGORY:")
@@ -538,7 +595,7 @@ async def main():
         # Generate markdown table
         markdown_table = comparator.generate_comparison_table(comparison_data)
         table_file = Path("results") / "comparison_table.md"
-        with open(table_file, 'w') as f:
+        with open(table_file, 'w', encoding='utf-8') as f:
             f.write(markdown_table)
 
         # Display results

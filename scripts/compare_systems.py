@@ -1,3 +1,6 @@
+import sys
+import os
+sys.path.append(os.getcwd())
 #!/usr/bin/env python3
 """
 GraphRAG vs Naive RAG Comparison System
@@ -28,7 +31,7 @@ logger = logging.getLogger(__name__)
 class SystemComparator:
     """Compares GraphRAG, Naive RAG, and Ground Truth systems."""
 
-    def __init__(self, config_path: str = "utils/config.toml"):
+    def __init__(self, config_path: str = "config/config.toml"):
         """Initialize the comparator."""
         self.config = self._load_config(config_path)
         self.results_dir = Path("results")
@@ -92,7 +95,7 @@ class SystemComparator:
         try:
             # Import the GraphRAG system dynamically
             spec = importlib.util.spec_from_file_location(
-                "graph_rag_module", "query_knowledge_graph.py"
+                "graph_rag_module", "src/rag/graph/querier.py"
             )
             graph_rag_module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(graph_rag_module)
@@ -110,7 +113,7 @@ class SystemComparator:
         try:
             # Import the Naive RAG system dynamically
             spec = importlib.util.spec_from_file_location(
-                "naive_rag_module", "4_naive_rag_cv.py"
+                "naive_rag_module", "scripts/demo_naive_rag.py"
             )
             naive_rag_module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(naive_rag_module)
@@ -148,8 +151,11 @@ class SystemComparator:
 
             # Agent RAG query (advanced multi-step reasoning)
             agent_start = time.time()
-            if hasattr(self.graph_rag_system, "query_graph_agent"):
-                agent_res = self.graph_rag_system.query_graph_agent(question) or {}
+            if hasattr(self.graph_rag_system, "agent"):
+                # Use the agent initialized in the graph system
+                agent_res = self.graph_rag_system.agent.query(question) or {}
+            elif hasattr(self.graph_rag_system, "query_graph_agent"):
+                 agent_res = self.graph_rag_system.query_graph_agent(question) or {}
             else:
                 agent_res = {"answer": "Agent RAG not available", "cypher_query": "", "success": False}
             agent_time = time.time() - agent_start
@@ -570,7 +576,7 @@ async def main():
         if not data_dir.exists() or not list(data_dir.glob("*.pdf")):
             print(f"\n⚠️  No CV PDFs found in {data_dir}")
             print("Please run: uv run python 1_generate_data.py")
-            print("Then run: uv run python comprehensive_pipeline.py")
+            print("Then run: uv run python src/rag/graph/ingestion.py")
             return False
 
         print("\n✅ CV data found successfully!")

@@ -1,17 +1,17 @@
 import logging
-from comprehensive_pipeline import GraphPipeline
-from parsers.assignment_loader import AssignmentLoader
+from src.rag.graph.ingestion import GraphPipeline
+from src.data.parsers.assignment_loader import AssignmentLoader
 
 class PipelineService:
     def __init__(self):
-        self.pipeline = GraphPipeline(config_path="utils/config.toml")
+        self.pipeline = GraphPipeline(config_path="config/config.toml")
 
     def assign_programmers(self, project_id: str):
         try:
             logger = logging.getLogger("PipelineService")
             logger.info("🔍 Stage 4: Assigning programmers to Projects...")
             # Ensure assignment_loader is available
-            assignment_loader = self.pipeline.assignment_loader or AssignmentLoader(config_path="utils/config.toml")
+            assignment_loader = self.pipeline.assignment_loader or AssignmentLoader(config_path="config/config.toml")
             programmers = assignment_loader.load_programmers_from_graph()
             for p in programmers:
                 availability = assignment_loader.calculate_availability(p.id)
@@ -29,7 +29,7 @@ class PipelineService:
             MATCH (p:Project)<-[:GENERATES]-(r:RFP {id: $rfp_id})
             RETURN p.id as id, p.name as name
             """
-            assignment_loader = self.pipeline.assignment_loader or AssignmentLoader(config_path="utils/config.toml")
+            assignment_loader = self.pipeline.assignment_loader or AssignmentLoader(config_path="config/config.toml")
             existing_project = assignment_loader.graph.query(project_query, {"rfp_id": rfp_id})
             if existing_project:
                 project_id = existing_project[0]["id"]
@@ -59,7 +59,7 @@ class PipelineService:
         """
         try:
             # Ensure assignment_loader is available
-            assignment_loader = self.pipeline.assignment_loader or AssignmentLoader(config_path="utils/config.toml")
+            assignment_loader = self.pipeline.assignment_loader or AssignmentLoader(config_path="config/config.toml")
             if assignment_loader.graph is None:
                 assignment_loader.graph = self.pipeline.cv_builder.graph
             

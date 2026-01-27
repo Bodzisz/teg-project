@@ -3,7 +3,7 @@ import logging
 import json
 from typing import List, Dict, Any
 from langchain_neo4j import Neo4jGraph
-from scoring import CandidateScoringEngine
+from src.core.matching.scoring import CandidateScoringEngine
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -47,7 +47,7 @@ class MatchingEngine:
         """
         
         # Use the centralized scoring engine to compute scores consistently
-        scorer = CandidateScoringEngine(config_path="utils/config.toml")
+        scorer = CandidateScoringEngine(config_path="config/config.toml")
 
         # Fetch RFP requirements
         req_q = """

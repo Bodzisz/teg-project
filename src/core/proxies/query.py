@@ -1,8 +1,9 @@
 import logging
 import uuid
 from typing import Dict, Any, List, Optional
-from query_knowledge_graph import CVGraphRAGSystem
-from naive_rag_querier import NaiveRAGQuerier
+from src.rag.graph.querier import CVGraphRAGSystem
+from src.rag.naive.querier import NaiveRAGQuerier
+from src.rag.agent.workflow import CVGraphAgent
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -18,6 +19,16 @@ class QueryDataProxy:
         """Initialize the query proxy."""
         self.graph_rag = CVGraphRAGSystem()
         self.naive_rag = NaiveRAGQuerier()
+        
+        # Initialize the agent with the sub-systems
+        # Assuming CVGraphRAGSystem has an 'llm' attribute we can reuse, or we rely on agent to reuse it.
+        # Actually CVGraphAgent takes (llm, graph_rag, naive_rag). 
+        # graph_rag has 'llm' attribute (ChatOpenAI).
+        self.agent = CVGraphAgent(
+            llm=self.graph_rag.llm, 
+            graph_rag=self.graph_rag, 
+            naive_rag=self.naive_rag
+        )
         
         # Centralized chat history storage
         # Format: {conversation_id: [(human, ai), ...]}
@@ -55,26 +66,26 @@ class QueryDataProxy:
         try:
             if mode == "agent":
                 # Agent RAG (Multi-Step / LangGraph)
-                self.graph_rag.chat_histories[conversation_id] = self.chat_histories[conversation_id]
-                result = self.graph_rag.query_graph_agent(question, conversation_id)
+                # Pass history string to agent
+                result = self.agent.query(question, chat_history_str)
                 response.update(result)
 
             elif mode == "graph":
-                # Simple Graph RAG (Original)
+                # Simple Graph RAG
+                # We update the history in graph_rag internally just in case (legacy), 
+                # but really we should pass it or handle it here.
+                # The updated CVGraphRAGSystem.query_graph accepts conversation_id to handle internal history,
+                # but since we are centralizing it here, we might just pass the string if we updated signatures,
+                # OR we just rely on `conversation_id` passing.
+                # Let's pass conversation_id as before, assuming query_graph handles it.
+                # NOTE: We renamed query_graph_simple to query_graph.
                 self.graph_rag.chat_histories[conversation_id] = self.chat_histories[conversation_id]
-                result = self.graph_rag.query_graph_simple(question, conversation_id)
+                result = self.graph_rag.query_graph(question, conversation_id)
                 response.update(result)
                 
             elif mode == "naive":
-                # Naive RAG implementation in naive_rag_querier.py doesn't seem to explicitly handle chat history in `query` method args
-                # checking naive_rag_querier.py again... it just takes `question`.
-                # If we want history in Naive RAG, we'd need to modify it or prepend it to the question.
-                # For now, we will just query it directly.
                 result = self.naive_rag.query(question)
                 response.update(result)
-                
-                # Naive RAG result doesn't natively include conversation_id or history update
-                # So we manually construct the answer part for our history
                 response["conversation_id"] = conversation_id
             
             else:

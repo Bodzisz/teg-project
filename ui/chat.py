@@ -1,6 +1,6 @@
 import streamlit as st
 import uuid
-from query_data_proxy import QueryDataProxy
+from src.core.proxies.query import QueryDataProxy
 
 @st.cache_resource
 def get_system():

@@ -1,12 +1,15 @@
+import sys
+import os
+sys.path.append(os.getcwd())
 import argparse
 import logging
 import asyncio
 from pathlib import Path
-from parsers.rfp_parser import RFPParser, ConfigLoader
-from parsers.assignment_loader import AssignmentLoader
+from src.data.parsers.rfp_parser import RFPParser, ConfigLoader
+from src.data.parsers.assignment_loader import AssignmentLoader
 import sys
 sys.path.append('.')
-from cv_knowledge_graph_builder import DataKnowledgeGraphBuilder
+from src.rag.graph.builder import DataKnowledgeGraphBuilder
 
 # Konfiguracja loggera
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -80,7 +83,7 @@ class GraphPipeline:
 if __name__ == "__main__":
     import asyncio
     parser = argparse.ArgumentParser(description="Run the comprehensive graph building pipeline.")
-    parser.add_argument("--config", type=str, default="utils/config.toml", help="Path to configuration file.")
+    parser.add_argument("--config", type=str, default="config/config.toml", help="Path to configuration file.")
     parser.add_argument("--skip-cvs", action="store_true", help="Skip CV processing stage.")
     parser.add_argument("--skip-rfp", action="store_true", help="Skip RFP parsing stage.")
     parser.add_argument("--clear-graph", action="store_true", help="Clear the entire graph before processing (WARNING: deletes all data).")

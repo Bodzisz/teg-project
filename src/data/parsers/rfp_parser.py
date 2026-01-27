@@ -15,7 +15,7 @@ from langchain.prompts import PromptTemplate
 from langchain.schema import HumanMessage
 from unstructured.partition.pdf import partition_pdf
 
-from models.rfp_models import RFPData
+from src.data.models.rfp_models import RFPData
 
 
 # Load environment variables
@@ -262,7 +262,7 @@ class RFPParser:
 
 if __name__ == "__main__":
     parser_cli = argparse.ArgumentParser(description="Parse RFP PDFs and save to Neo4j.")
-    parser_cli.add_argument("--config", type=str, default="utils/config.toml", help="Path to config file.")
+    parser_cli.add_argument("--config", type=str, default="config/config.toml", help="Path to config file.")
     parser_cli.add_argument("--model", type=str, default="gpt-4o-mini", help="LLM model for parsing.")
     parser_cli.add_argument("pdf_files", nargs="*", help="Paths to RFP PDF files. If empty, will use config directory.")
     args = parser_cli.parse_args()

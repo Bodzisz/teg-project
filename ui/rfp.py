@@ -6,9 +6,9 @@ import time
 from langchain_neo4j import Neo4jGraph
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
-from parsers.rfp_parser import RFPParser
-from save_data_proxy import SaveDataProxy
-from pipeline_service import PipelineService
+from src.data.parsers.rfp_parser import RFPParser
+from src.core.proxies.save import SaveDataProxy
+from src.core.services.pipeline import PipelineService
 
 # Load environment variables
 load_dotenv(override=True)
@@ -387,7 +387,7 @@ def render_rfp():
         if ac1.button("Find Matching Candidates", use_container_width=True, type="primary", disabled=disabled_controls):
             with st.spinner("Finding best matches..."):
                 try:
-                    from matching_engine import MatchingEngine
+                    from src.core.matching.engine import MatchingEngine
                     engine = MatchingEngine()
                     lookup_id = rfp.get('entity_id') or rfp.get('title')
                     matches = engine.rank_candidates(lookup_id, top_n=10)
@@ -524,7 +524,7 @@ def render_rfp():
                                             st.table(sanitize_for_display(result.get('assignments')))
                                     # Refresh matches to reflect updated availability
                                     try:
-                                        from matching_engine import MatchingEngine
+                                        from src.core.matching.engine import MatchingEngine
                                         engine = MatchingEngine()
                                         new_matches = engine.rank_candidates(rfp.get('entity_id') or rfp.get('title'), top_n=10)
                                         st.session_state['current_matches'] = new_matches

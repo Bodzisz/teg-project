@@ -4,7 +4,7 @@ import tempfile
 import asyncio
 from langchain_neo4j import Neo4jGraph
 from dotenv import load_dotenv
-from save_data_proxy import SaveDataProxy
+from src.core.proxies.save import SaveDataProxy
 
 # Load environment variables
 load_dotenv(override=True)

@@ -16,6 +16,8 @@ import uuid
 import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime
+from pathlib import Path
+from src.core.utils.prompt_loader import load_prompt
 
 from langchain_neo4j import Neo4jGraph, GraphCypherQAChain
 from langchain_openai import ChatOpenAI
@@ -84,44 +86,9 @@ class CVGraphRAGSystem:
         )
 
         # Custom Cypher generation prompt with case-insensitive matching
-        CYPHER_GENERATION_TEMPLATE = """Task: Generate Cypher statement to query a graph database.
-Instructions:
-1. Use only the provided relationship types and properties in the schema.
-2. Do not use any other relationship types or properties that are not provided.
-3. For skill matching, always use case-insensitive comparison using toLower() function.
-4. For count queries, ensure you return meaningful column names.
-5. Use the provided Chat History to filter results if the question refers to previous context (e.g., "they", "those people").
-6. If the question is about relative date (e.g. tomorrow, yesterday, last week, next week), use {today} as the date. Treat Q1, Q2, Q3, Q4 as 1st, 2nd, 3rd, 4th quarter of current year.
-
-Schema:
-{schema}
-
-Note: Do not include any explanations or apologies in your responses.
-Do not respond to any questions that might ask anything else than for you to construct a Cypher statement.
-Do not include any text except the generated Cypher statement.
-
-Examples: Here are a few examples of generated Cypher statements for particular questions:
-
-# How many Python programmers do we have?
-MATCH (p:Person)-[:HAS_SKILL]->(s:Skill)
-WHERE toLower(s.id) = toLower("Python")
-RETURN count(p) AS pythonProgrammers
-
-# Who has React skills?
-MATCH (p:Person)-[:HAS_SKILL]->(s:Skill)
-WHERE toLower(s.id) = toLower("React")
-RETURN p.id AS name
-
-# Find people with both Python and Django skills
-MATCH (p:Person)-[:HAS_SKILL]->(s1:Skill), (p)-[:HAS_SKILL]->(s2:Skill)
-WHERE toLower(s1.id) = toLower("Python") AND toLower(s2.id) = toLower("Django")
-RETURN p.id AS name
-
-The question is:
-{question}
-
-Chat History (for context):
-{chat_history}"""
+        prompts_dir = Path(__file__).parent / "prompts"
+        
+        CYPHER_GENERATION_TEMPLATE = load_prompt(prompts_dir / "cypher_generation.txt")
 
         CYPHER_GENERATION_PROMPT = PromptTemplate(
             input_variables=["schema", "question", "chat_history"],
@@ -130,25 +97,7 @@ Chat History (for context):
         )
 
         # Custom QA prompt for better handling of numeric results
-        CYPHER_QA_TEMPLATE = """You are an assistant that helps to form nice and human understandable answers.
-The information part contains the result(s) of a Cypher query that was executed against a knowledge graph.
-Information is provided as a list of records from the graph database.
-
-Guidelines:
-- If the information contains count results or numbers, state the exact count clearly.
-- For count queries that return 0, say "There are 0 [items]" - this is a valid result, not missing information.
-- If the information is empty or null, then say you don't know the answer.
-- Use the provided information to construct a helpful answer.
-- Be specific and mention actual names, numbers, or details from the information.
-- IMPORTANT!!!: In where conditions prefer to use contains() function instead of = for better matching. For example, if user asks for "security" projects, use category contains "security" instead of category = "security".
-- "Developer" maps to Person node.
-- If the question is about relative date (e.g. tomorrow, yesterday, last week, next week), use {today} as the date. Treat Q1, Q2, Q3, Q4 as 1st, 2nd, 3rd, 4th quarter of current year.
-
-Information:
-{context}
-
-Question: {question}
-Helpful Answer:"""
+        CYPHER_QA_TEMPLATE = load_prompt(prompts_dir / "cypher_qa.txt")
 
         CYPHER_QA_PROMPT = PromptTemplate(
             input_variables=["context", "question"],

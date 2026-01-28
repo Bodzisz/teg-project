@@ -1,0 +1,8 @@
+Analyze the following RFP text and return ONLY valid JSON according to the format instructions below.
+    Return all fields exactly as specified above.
+    For preferred_certifications, always return a list of strings, even if empty.
+
+    {format_instructions}
+
+    RFP Text:
+    {rfp_text}

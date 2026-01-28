@@ -16,6 +16,7 @@ from langchain.schema import HumanMessage
 from unstructured.partition.pdf import partition_pdf
 
 from src.data.models.rfp_models import RFPData
+from src.core.utils.prompt_loader import load_prompt
 
 
 # Load environment variables
@@ -91,18 +92,12 @@ class RFPParser:
         format_instructions = output_parser.get_format_instructions()
 
         # 2. Prompt construction
+        prompts_dir = Path(__file__).parent / "prompts"
+        template_text = load_prompt(prompts_dir / "rfp_parsing.txt")
+        
         prompt_template = PromptTemplate(
             input_variables=["rfp_text", "format_instructions"],
-            template="""
-    Analyze the following RFP text and return ONLY valid JSON according to the format instructions below.
-    Return all fields exactly as specified above.
-    For preferred_certifications, always return a list of strings, even if empty.
-
-    {format_instructions}
-
-    RFP Text:
-    {rfp_text}
-    """
+            template=template_text
         )
 
         prompt = prompt_template.format(rfp_text=rfp_text, format_instructions=format_instructions)
@@ -294,4 +289,3 @@ if __name__ == "__main__":
             print(f"\nJSON for {pdf_path}:\n{json.dumps(rfp_data.model_dump(), indent=2)}\n")
         except Exception as e:
             logger.error("Error processing file %s: %s", pdf_path, e)
-

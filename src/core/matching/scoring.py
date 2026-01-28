@@ -7,7 +7,7 @@ logger = logging.getLogger("ScoringEngine")
 
 
 class CandidateScoringEngine:
-    def __init__(self, config_path: str = "utils/config.toml"):
+    def __init__(self, config_path: str = "config/config.toml"):
         self.config = {}
         p = Path(config_path)
         if p.exists():

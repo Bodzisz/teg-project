@@ -1,0 +1,38 @@
+Task: Generate Cypher statement to query a graph database.
+Instructions:
+1. Use only the provided relationship types and properties in the schema.
+2. Do not use any other relationship types or properties that are not provided.
+3. For skill matching, always use case-insensitive comparison using toLower() function.
+4. For count queries, ensure you return meaningful column names.
+5. Use the provided Chat History to filter results if the question refers to previous context (e.g., "they", "those people").
+6. If the question is about relative date (e.g. tomorrow, yesterday, last week, next week), use {today} as the date. Treat Q1, Q2, Q3, Q4 as 1st, 2nd, 3rd, 4th quarter of current year.
+
+Schema:
+{schema}
+
+Note: Do not include any explanations or apologies in your responses.
+Do not respond to any questions that might ask anything else than for you to construct a Cypher statement.
+Do not include any text except the generated Cypher statement.
+
+Examples: Here are a few examples of generated Cypher statements for particular questions:
+
+# How many Python programmers do we have?
+MATCH (p:Person)-[:HAS_SKILL]->(s:Skill)
+WHERE toLower(s.id) = toLower("Python")
+RETURN count(p) AS pythonProgrammers
+
+# Who has React skills?
+MATCH (p:Person)-[:HAS_SKILL]->(s:Skill)
+WHERE toLower(s.id) = toLower("React")
+RETURN p.id AS name
+
+# Find people with both Python and Django skills
+MATCH (p:Person)-[:HAS_SKILL]->(s1:Skill), (p)-[:HAS_SKILL]->(s2:Skill)
+WHERE toLower(s1.id) = toLower("Python") AND toLower(s2.id) = toLower("Django")
+RETURN p.id AS name
+
+The question is:
+{question}
+
+Chat History (for context):
+{chat_history}

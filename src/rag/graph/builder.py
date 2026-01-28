@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 class DataKnowledgeGraphBuilder:
     """Builds knowledge graph from PDFs and JSONs using LangChain's LLMGraphTransformer."""
 
-    def __init__(self, config_path: str = "utils/config.toml", clear_graph: bool = False):
+    def __init__(self, config_path: str = "config/config.toml", clear_graph: bool = False):
         """Initialize the data knowledge graph builder."""
         self.config = self._load_config(config_path)
         self.setup_neo4j(clear_graph=clear_graph)

@@ -4,9 +4,9 @@ from pathlib import Path
 from typing import List, Union
 
 # Import underlying builders/parsers
-from cv_knowledge_graph_builder import DataKnowledgeGraphBuilder
-from parsers.rfp_parser import RFPParser
-from naive_rag_loader import NaiveRAGLoader
+from src.rag.graph.builder import DataKnowledgeGraphBuilder
+from src.data.parsers.rfp_parser import RFPParser
+from src.rag.naive.loader import NaiveRAGLoader
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

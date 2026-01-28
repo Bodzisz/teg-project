@@ -8,8 +8,8 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from pathlib import Path
 from typing import List, Dict, Any
-from models.project_models import ProjectData, Requirement
-from models.programmer_models import ProgrammerData, Skill
+from src.data.models.project_models import ProjectData, Requirement
+from src.data.models.programmer_models import ProgrammerData, Skill
 from langchain_neo4j import Neo4jGraph
 import random
 
@@ -368,7 +368,7 @@ class AssignmentLoader:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Calculate availability and assign programmers.")
-    parser.add_argument("--config", type=str, default="utils/config.toml", help="Path to the configuration file.")
+    parser.add_argument("--config", type=str, default="config/config.toml", help="Path to the configuration file.")
     parser.add_argument("--projects", type=str, default="data/projects/projects.json", help="Path to the projects file.")
     parser.add_argument("--assignments", type=str, help="Optional YAML file with allocations (offline mode).")
     args = parser.parse_args()

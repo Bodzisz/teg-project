@@ -1,3 +1,6 @@
+import sys
+import os
+sys.path.append(os.getcwd())
 #!/usr/bin/env python3
 """
 Naive RAG Baseline for CV Data
@@ -34,7 +37,7 @@ logger = logging.getLogger(__name__)
 class NaiveRAGSystem:
     """Traditional RAG system using vector similarity search."""
 
-    def __init__(self, config_path: str = "utils/config.toml"):
+    def __init__(self, config_path: str = "config/config.toml"):
         """Initialize the Naive RAG system."""
         self.config = self._load_config(config_path)
 

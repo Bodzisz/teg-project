@@ -22,6 +22,8 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
 
+from src.core.utils.prompt_loader import load_prompt
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -71,17 +73,11 @@ class NaiveRAGQuerier:
 
     def _setup_chain(self):
         """Setup the RAG chain."""
+        prompts_dir = Path(__file__).parent / "prompts"
+        system_prompt = load_prompt(prompts_dir / "naive_rag_system.txt")
+        
         prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are an helpful assistant helping with CV and RFP analysis. Use the provided context to answer questions accurately.
-
-IMPORTANT INSTRUCTIONS:
-- Base your answers ONLY on the information provided in the context
-- If you cannot determine something from the context, say so clearly
-- Be specific about names, skills, and details when they appear in the context
-- Context contains both CVs and RFPs.
-
-Context:
-{context}"""),
+            ("system", system_prompt),
             ("human", "{question}")
         ])
 

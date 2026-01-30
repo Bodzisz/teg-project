@@ -25,5 +25,5 @@
 ## Runtime entry points
 
 - UI: [streamlit_app.py](streamlit_app.py)
-- Pipeline module: [src/services/pipeline.py](src/services/pipeline.py)
+- Pipeline module: [src/core/services/pipeline.py](src/core/services/pipeline.py)
 - Experiment scripts: [scripts/](scripts/)

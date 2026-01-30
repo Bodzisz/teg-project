@@ -177,9 +177,19 @@ def evaluate_with_ragas(ragas_samples, out_path: Path):
         embeddings=embeddings_wrapper
     )
 
+    # Convert the result to a JSON-serializable structure if needed (e.g., RAGAS Result -> pandas DataFrame -> dict)
+    serializable_result = result
+    if hasattr(result, "to_pandas"):
+        df = result.to_pandas()
+        try:
+            serializable_result = df.to_dict(orient="records")
+        except TypeError:
+            # Fallback to default orientation if orient="records" is not supported
+            serializable_result = df.to_dict()
+
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("w", encoding="utf-8") as f:
-        json.dump(result, f, indent=2, ensure_ascii=False)
+        json.dump(serializable_result, f, indent=2, ensure_ascii=False)
 
     return result
 

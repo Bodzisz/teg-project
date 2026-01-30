@@ -1,138 +1,87 @@
-### TEG Project
+### Elite Match AI
 
-[Project description](https://github.com/wodecki/TEG_2025/blob/main/src/3.%20Retrieval%20Augmented%20Generation/07_Your_Project_TalentMatch/PRD.md)
+This repository implements the Talent Matcher system: it ingests programmer
+profiles and RFPs, builds a knowledge graph, ranks candidates for RFPs, and
+provides an interactive Streamlit UI for reviewing matches and assignments.
 
+Project layout (top-level highlights):
 
-This repository contains the Talent Matcher project (TEG). It provides tools to
-ingest CVs and RFPs into Neo4j, rank candidates for RFPs, and assign programmers
-to projects. The web UI uses Streamlit for interactive workflows.
+- **Files**: [README.md](README.md), [main.py](main.py), [streamlit_app.py](streamlit_app.py), [pyproject.toml](pyproject.toml), [docker-compose.yml](docker-compose.yml)
+- **Data**: [data/](data/) and [data_extended/](data_extended/) (source CVs, projects, RFPs)
+- **Source**: [src/](src/) — core code, matching engine, RAG modules, parsers, and services
+- **Scripts**: [scripts/](scripts/) — helpers and demos
+- **Neo4j**: [neo4j/](neo4j/) — local DB state when using Docker Compose
+- **Tests**: [tests/](tests/) — unit and e2e tests
 
-## Quicklinks
+Quick pointers
 
-- Source RFP/Projects/CVs: `data/`
-- Pipeline loader: `comprehensive_pipeline.py` (loads CVs and RFPs into Neo4j)
-- Streamlit UI: `streamlit_app.py`
-
----
-
-## Docker
-
-We use Docker Compose to run a local Neo4j instance. From the repository root (where
-`docker-compose.yml` is located) run:
-
-```bash
-docker-compose up -d
-```
-
-To list running containers:
-
-```bash
-docker ps
-```
-
-To follow Neo4j logs:
-
-```bash
-docker-compose logs -f neo4j
-```
-
-To stop and remove the containers:
-
-```bash
-docker-compose down
-```
-
-Note: the Neo4j data is stored in a Docker volume defined in `docker-compose.yml`.
-
----
-
-## Neo4j Browser
-
-Once the Neo4j container is running, open the browser at:
-
-```
-http://localhost:7474
-```
-
-Log in with the username/password you configured in `docker-compose.yml`.
-
-You can also run Cypher commands from the container:
-
-```bash
-docker exec -it <neo4j_container_name> bash
-cypher-shell -u <user> -p <password>
-# then run Cypher queries, exit with :exit
-```
-
----
-
-## Load data from `data/` into Neo4j
-
-The repository includes a pipeline script that processes CVs and RFP PDFs and
-creates nodes and relationships in Neo4j. To load data into the running Neo4j
-instance, do the following:
-
-1. Use the `uv` package manager to create an environment and install dependencies from `pyproject.toml`.
-
-```bash
-# Install uv if you don't have it (global install)
-python -m pip install --user uv
-
-# Sync dependencies and create the project environment
-uv sync
-```
-
-`uv sync` creates an isolated virtual environment and installs the packages
-from `pyproject.toml`. After that, run commands inside the environment with
-`uv run`.
-
-2. Run the comprehensive pipeline to process CVs and RFPs into Neo4j. By
-  default the pipeline only loads CVs and RFPs (matching and assignments are
-  handled interactively through the Streamlit UI):
-
-```bash
-uv run python comprehensive_pipeline.py --config utils/config.toml
-```
-
-
----
-
-## Run the Streamlit UI
-
-Start the Streamlit app from the repository root:
+- **Streamlit UI**: Run the app from the repository root using Streamlit:
 
 ```bash
 uv run streamlit run streamlit_app.py
 ```
 
-Open the provided local URL (usually `http://localhost:8501`) in your browser.
+Open the local URL printed by Streamlit (typically http://localhost:8501).
 
-The Streamlit UI exposes buttons to run matching and assignments once you have
-ingested data and selected a target RFP.
+- **Pipeline loader**: The ingestion and pipeline logic lives under the `src` package. To run the pipeline module directly (loads/parses data and writes to the graph), run:
 
----
+```bash
+uv run python -m src.services.pipeline --config utils/config.toml
+```
 
-## Unit tests (pytest)
+Adjust the command if you prefer calling a different runner (for example, a
+custom script in `scripts/`).
 
-There are unit tests that verify matching and assignment logic. Tests mock the
-Neo4j connection and scoring components, so a running Neo4j instance is not
-required to run the tests.
+- **Neo4j (Docker Compose)**: A Docker Compose file is provided for a local
+  Neo4j instance. From the repository root:
 
-1. Make sure you ran `uv sync` to create the project environment (see above).
+```bash
+docker-compose up -d
+```
 
-2. Run the test suite from the repository root:
+To follow logs:
+
+```bash
+docker-compose logs -f neo4j
+```
+
+To stop and remove containers:
+
+```bash
+docker-compose down
+```
+
+Neo4j Browser is usually available at http://localhost:7474 (or the Bolt
+endpoint at 7687). Update connection settings in `utils/config.toml` if needed.
+
+- **Development environment**: This project uses `uv` to create and manage an
+  isolated environment from `pyproject.toml`. Install and sync dependencies:
+
+```bash
+python -m pip install --user uv
+uv sync
+```
+
+Run commands inside the environment using `uv run`, e.g. `uv run python ...`.
+
+- **Tests (pytest)**: Run the test suite from the repository root:
 
 ```bash
 uv run python -m pytest -q
 ```
 
----
+Notes and troubleshooting
 
-## Notes and troubleshooting
+- Tests include mocks for external services so a running Neo4j instance is not
+  required for unit tests.
+- If connectors or optional libraries (e.g. langchain-related packages) cause
+  import errors during local development, install the extras or adjust tests
+  that mock those modules.
+- If you want, I can also:
+  - run the test suite locally and report failures
+  - add example commands for common workflows
+  - commit this README change for you
 
-- If imports for `langchain_neo4j` or other third-party libraries fail during
-  tests, the unit tests include light mocks so tests can run without the
-  service dependencies.
-- Adjust `utils/config.toml` to point to your Neo4j connection settings if
-  the defaults do not match your environment.
+See [streamlit_app.py](streamlit_app.py) and the code under [src/](src/) for
+implementation details and example usage.
 

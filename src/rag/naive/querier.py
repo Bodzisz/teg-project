@@ -114,6 +114,7 @@ class NaiveRAGQuerier:
             execution_time = time.time() - start_time
             
             context_info = []
+            contexts = []
             for i, doc in enumerate(relevant_docs):
                 context_info.append({
                     "chunk_index": i,
@@ -123,12 +124,14 @@ class NaiveRAGQuerier:
                     "rfp_name": doc.metadata.get("rfp_name"),
                     "content_preview": doc.page_content[:200] + "..."
                 })
+                contexts.append(doc.page_content)
                 
             return {
                 "answer": answer,
                 "source_type": "naive_rag",
                 "execution_time": execution_time,
                 "context_info": context_info,
+                "contexts": contexts,
                 "success": True
             }
             
@@ -137,6 +140,7 @@ class NaiveRAGQuerier:
             return {
                 "answer": f"Error processing query: {str(e)}",
                 "context_info": [],
+                "contexts": [],
                 "success": False
             }
 

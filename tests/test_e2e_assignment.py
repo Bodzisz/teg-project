@@ -100,7 +100,7 @@ def test_end_to_end_assign_flow():
     # Patch Neo4jGraph to use MockNeo4j for all components
     with patch("langchain_neo4j.Neo4jGraph", return_value=MockNeo4j()):
         # Import here to ensure patched class is used in constructors
-        from pipeline_service import PipelineService
+        from src.core.services.pipeline import PipelineService
 
         service = PipelineService()
 

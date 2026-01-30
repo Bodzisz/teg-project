@@ -6,7 +6,7 @@ from unittest.mock import patch
 sys.modules.setdefault('langchain_neo4j', types.SimpleNamespace(Neo4jGraph=lambda *a, **k: None))
 sys.modules.setdefault('dotenv', types.SimpleNamespace(load_dotenv=lambda *a, **k: None))
 
-from parsers.assignment_loader import AssignmentLoader
+from src.data.parsers.assignment_loader import AssignmentLoader
 
 
 class MockGraphAssignment:
@@ -42,8 +42,8 @@ class MockGraphAssignment:
 
 
 def test_assign_candidates_to_single_project_distributes_allocations_and_updates_availability():
-    with patch("parsers.assignment_loader.Neo4jGraph", return_value=MockGraphAssignment()):
-        loader = AssignmentLoader(config_path="utils/config.toml")
+    with patch("src.data.parsers.assignment_loader.Neo4jGraph", return_value=MockGraphAssignment()):
+        loader = AssignmentLoader(config_path="config/config.toml")
         assignments = loader.assign_candidates_to_single_project("proj-1")
 
         assert isinstance(assignments, list)

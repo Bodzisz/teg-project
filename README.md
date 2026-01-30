@@ -1,6 +1,6 @@
 ### Elite Match AI
 
-This repository implements the Talent Matcher system: it ingests programmer
+This repository implements the Elite Match AI system: it ingests programmer
 profiles and RFPs, builds a knowledge graph, ranks candidates for RFPs, and
 provides an interactive Streamlit UI for reviewing matches and assignments.
 

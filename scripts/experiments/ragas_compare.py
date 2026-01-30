@@ -138,7 +138,7 @@ def build_evaluator():
     from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
     llm = ChatOpenAI(
-        model=os.getenv("OPENAI_EVAL_MODEL", "gpt-4o-mini"),
+        model=os.getenv("OPENAI_EVAL_MODEL", "gpt-4.1"),
         temperature=0,
         api_key=os.getenv("OPENAI_API_KEY")
     )

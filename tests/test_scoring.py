@@ -1,9 +1,9 @@
 import pytest
-from scoring import CandidateScoringEngine
+from src.core.matching.scoring import CandidateScoringEngine
 
 
 def test_calculate_score_with_cert_and_proficiency():
-    scorer = CandidateScoringEngine(config_path="utils/config.toml")
+    scorer = CandidateScoringEngine(config_path="config/config.toml")
 
     candidate = {
         "skills": [{"name": "Python", "proficiency": "Advanced"}],
@@ -31,7 +31,7 @@ def test_calculate_score_with_cert_and_proficiency():
 
 
 def test_calculate_score_missing_mandatory_fails_mandatory_met():
-    scorer = CandidateScoringEngine(config_path="utils/config.toml")
+    scorer = CandidateScoringEngine(config_path="config/config.toml")
 
     candidate = {
         "skills": [],

@@ -26,6 +26,8 @@ from langchain_openai import ChatOpenAI
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_core.prompts import PromptTemplate
 
+from utils.experiment_logging import write_experiment_metadata
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -238,6 +240,18 @@ Answer (concise, direct):"""
             "ground_truth_answers": results,
             "original_test_questions": test_data
         }
+
+        write_experiment_metadata(
+            run_name="generate_ground_truth",
+            metadata={
+                "model": "gpt-4.1",
+                "max_tokens": 4096,
+                "num_questions": len(results),
+                "num_cvs": len(all_cv_texts),
+                "max_cvs": self.max_cvs,
+                "prompt_template": self.create_ground_truth_prompt().template,
+            }
+        )
 
         return ground_truth_data
 

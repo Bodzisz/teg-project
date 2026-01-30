@@ -6,7 +6,7 @@ from unittest.mock import patch
 sys.modules.setdefault('langchain_neo4j', types.SimpleNamespace(Neo4jGraph=lambda *a, **k: None))
 sys.modules.setdefault('dotenv', types.SimpleNamespace(load_dotenv=lambda *a, **k: None))
 
-from matching_engine import MatchingEngine
+from src.core.matching.engine import MatchingEngine
 
 
 class MockGraph:
@@ -41,8 +41,8 @@ class FakeScorer:
 
 
 def test_rank_candidates_orders_by_score_and_returns_rfp_id():
-    with patch("matching_engine.Neo4jGraph", return_value=MockGraph()), \
-         patch("matching_engine.CandidateScoringEngine", FakeScorer):
+    with patch("src.core.matching.engine.Neo4jGraph", return_value=MockGraph()), \
+         patch("src.core.matching.engine.CandidateScoringEngine", FakeScorer):
         engine = MatchingEngine()
         out = engine.rank_candidates("rfp-1", top_n=2)
 
@@ -69,9 +69,9 @@ def test_rank_candidates_explainability_and_score_consistency():
                 ]
             return []
 
-    with patch("matching_engine.Neo4jGraph", return_value=MockGraph2()):
+    with patch("src.core.matching.engine.Neo4jGraph", return_value=MockGraph2()):
         # Use real scorer
-        from scoring import CandidateScoringEngine
+        from src.core.matching.scoring import CandidateScoringEngine
         engine = MatchingEngine()
         out = engine.rank_candidates("rfp-1", top_n=2)
 

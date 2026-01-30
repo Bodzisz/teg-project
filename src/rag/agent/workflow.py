@@ -152,12 +152,13 @@ class CVGraphAgent:
                     
                     answer = vector_result.get("answer", "No answer from vector search.")
                     context_info = vector_result.get("context_info", [])
+                    contexts = vector_result.get("contexts", [])
                     
                     query_result = {
                         "asked": step,
                         "type": "vector",
                         "answer": answer,
-                        "context": context_info
+                        "context": contexts if contexts else context_info if context_info else []
                     }
                 else:
                     # Execute Graph Search via System
@@ -247,15 +248,23 @@ class CVGraphAgent:
         # Find the last helpful cypher query if any
         gathered = final_state.get("gathered_info", [])
         last_cypher = ""
+        contexts = []
         for info in reversed(gathered):
             if info.get("type") == "graph" and info.get("cypher"):
                 last_cypher = info.get("cypher")
                 break
+        for info in gathered:
+            if info.get("context"):
+                if isinstance(info["context"], list):
+                    contexts.extend(info["context"])
+                else:
+                    contexts.append(info["context"])
                 
         return {
             "question": question,
             "answer": answer,
             "cypher_query": last_cypher,
+            "contexts": contexts,
             "success": "Error" not in answer
         }
 

@@ -16,17 +16,18 @@ load_dotenv(override=True)
 import json
 import time
 import asyncio
-import importlib.util
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 from datetime import datetime
 import logging
 import toml
-import os
+
+from utils.experiment_logging import collect_prompt_sources, write_experiment_metadata
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
 
 class SystemComparator:
     """Compares GraphRAG, Naive RAG, and Ground Truth systems."""
@@ -40,6 +41,7 @@ class SystemComparator:
         # Systems will be initialized when needed
         self.graph_rag_system = None
         self.naive_rag_system = None
+        self.agent_rag_system = None
 
         logger.info("✓ System Comparator initialized")
 
@@ -91,16 +93,11 @@ class SystemComparator:
         return data
 
     def initialize_graph_rag_system(self):
-        """Initialize the GraphRAG system from file 3."""
+        """Initialize the GraphRAG system."""
         try:
-            # Import the GraphRAG system dynamically
-            spec = importlib.util.spec_from_file_location(
-                "graph_rag_module", "src/rag/graph/querier.py"
-            )
-            graph_rag_module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(graph_rag_module)
+            from scripts.experiments.system_init import init_graphrag
 
-            self.graph_rag_system = graph_rag_module.CVGraphRAGSystem()
+            self.graph_rag_system = init_graphrag()
             logger.info("✓ GraphRAG system initialized")
             return True
 
@@ -109,69 +106,49 @@ class SystemComparator:
             return False
 
     def initialize_naive_rag_system(self):
-        """Initialize the Naive RAG system from file 4."""
+        """Initialize the Naive RAG system."""
         try:
-            # Import the Naive RAG system dynamically
-            spec = importlib.util.spec_from_file_location(
-                "naive_rag_module", "scripts/demo_naive_rag.py"
-            )
-            naive_rag_module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(naive_rag_module)
+            from scripts.experiments.system_init import init_naiverag
 
-            self.naive_rag_system = naive_rag_module.NaiveRAGSystem()
-
-            # Initialize the system
-            if self.naive_rag_system.initialize_system():
-                logger.info("✓ Naive RAG system initialized")
-                return True
-            else:
-                logger.error("Failed to initialize Naive RAG system")
-                return False
+            self.naive_rag_system = init_naiverag(querier=True)
+            logger.info("✓ Naive RAG system initialized")
+            return True
 
         except Exception as e:
             logger.error(f"Failed to initialize Naive RAG system: {e}")
             return False
 
+    def initialize_agent_rag_system(self):
+        """Initialize the AgentRAG system as a separate system."""
+        try:
+            from scripts.experiments.system_init import init_agentrag
+
+            if not self.graph_rag_system or not self.naive_rag_system:
+                raise RuntimeError("GraphRAG and NaiveRAG must be initialized before AgentRAG")
+
+            self.agent_rag_system = init_agentrag(self.graph_rag_system, self.naive_rag_system)
+            logger.info("✓ AgentRAG system initialized")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to initialize AgentRAG system: {e}")
+            return False
+
     def run_graph_rag_query(self, question: str) -> Dict[str, Any]:
         """Run a query through the GraphRAG system."""
         try:
-            # Try both simple graph query and agent (advanced) query if available
+            from scripts.experiments.system_init import run_graph_query
+
             start_time = time.time()
-
-            # Simple GraphRAG query (preferred method name: query_graph_simple)
-            simple_start = time.time()
-            if hasattr(self.graph_rag_system, "query_graph_simple"):
-                simple_res = self.graph_rag_system.query_graph_simple(question) or {}
-            elif hasattr(self.graph_rag_system, "query_graph"):
-                # Backwards-compatible fallback
-                simple_res = self.graph_rag_system.query_graph(question) or {}
-            else:
-                simple_res = {"answer": "GraphRAG simple query not available", "cypher_query": "", "success": False}
-            simple_time = time.time() - simple_start
-
-            # Agent RAG query (advanced multi-step reasoning)
-            agent_start = time.time()
-            if hasattr(self.graph_rag_system, "agent"):
-                # Use the agent initialized in the graph system
-                agent_res = self.graph_rag_system.agent.query(question) or {}
-            elif hasattr(self.graph_rag_system, "query_graph_agent"):
-                 agent_res = self.graph_rag_system.query_graph_agent(question) or {}
-            else:
-                agent_res = {"answer": "Agent RAG not available", "cypher_query": "", "success": False}
-            agent_time = time.time() - agent_start
-
+            res = run_graph_query(self.graph_rag_system, question)
             execution_time = time.time() - start_time
 
             return {
                 "question": question,
-                "answer_simple": simple_res.get("answer", "No answer"),
-                "answer_agent": agent_res.get("answer", "No answer"),
-                "cypher_query": simple_res.get("cypher_query", "") or agent_res.get("cypher_query", ""),
+                "answer": res.get("answer", "No answer"),
+                "cypher_query": res.get("cypher_query", ""),
                 "execution_time": execution_time,
-                "simple_time": simple_time,
-                "agent_time": agent_time,
-                "success_simple": simple_res.get("success", False),
-                "success_agent": agent_res.get("success", False),
+                "success": res.get("success", False),
                 "system": "graphrag"
             }
 
@@ -190,13 +167,17 @@ class SystemComparator:
     def run_naive_rag_query(self, question: str) -> Dict[str, Any]:
         """Run a query through the Naive RAG system."""
         try:
-            result = self.naive_rag_system.query(question)
+            from scripts.experiments.system_init import run_naive_query
+
+            start_time = time.time()
+            result = run_naive_query(self.naive_rag_system, question)
+            execution_time = time.time() - start_time
 
             return {
                 "question": question,
                 "answer": result.get("answer", "No answer"),
-                "execution_time": result.get("execution_time", 0),
-                "num_chunks_retrieved": result.get("num_chunks_retrieved", 0),
+                "execution_time": execution_time,
+                "num_chunks_retrieved": len(result.get("contexts", []) or []),
                 "success": result.get("success", False),
                 "system": "naive_rag"
             }
@@ -210,6 +191,34 @@ class SystemComparator:
                 "num_chunks_retrieved": 0,
                 "success": False,
                 "system": "naive_rag",
+                "error": str(e)
+            }
+
+    def run_agent_rag_query(self, question: str) -> Dict[str, Any]:
+        """Run a query through the AgentRAG system."""
+        try:
+            from scripts.experiments.system_init import run_agent_query
+
+            start_time = time.time()
+            result = run_agent_query(self.agent_rag_system, question)
+            execution_time = time.time() - start_time
+
+            return {
+                "question": question,
+                "answer": result.get("answer", "No answer"),
+                "execution_time": execution_time,
+                "success": result.get("success", False),
+                "system": "agent_rag"
+            }
+
+        except Exception as e:
+            logger.error(f"Agent RAG query failed for '{question}': {e}")
+            return {
+                "question": question,
+                "answer": f"Error: {str(e)}",
+                "execution_time": 0,
+                "success": False,
+                "system": "agent_rag",
                 "error": str(e)
             }
 
@@ -301,6 +310,31 @@ class SystemComparator:
         if not self.initialize_naive_rag_system():
             raise Exception("Failed to initialize Naive RAG system")
 
+        if not self.initialize_agent_rag_system():
+            raise Exception("Failed to initialize Agent RAG system")
+
+        prompt_sources = collect_prompt_sources({
+            "graph.cypher_generation": "src/rag/graph/prompts/cypher_generation.txt",
+            "graph.cypher_qa": "src/rag/graph/prompts/cypher_qa.txt",
+            "agent.coordinator": "src/rag/agent/prompts/coordinator.txt",
+            "agent.planner": "src/rag/agent/prompts/planner.txt",
+            "agent.cleanup": "src/rag/agent/prompts/cleanup.txt",
+            "naive.system": "src/rag/naive/prompts/naive_rag_system.txt",
+        })
+
+        write_experiment_metadata(
+            run_name="compare_systems",
+            metadata={
+                "systems": ["graph", "agent", "naive"],
+                "ground_truth": str(self.results_dir / "ground_truth_answers.json"),
+                "config": "config/config.toml",
+                "models": {
+                    "openai_model": os.getenv("OPENAI_MODEL"),
+                },
+                "prompts": prompt_sources,
+            }
+        )
+
         logger.info(f"Starting comparison with {len(questions)} questions...")
 
         # Run all comparisons
@@ -312,20 +346,24 @@ class SystemComparator:
 
             logger.info(f"\n[{i+1}/{len(questions)}] Processing: {question[:50]}...")
 
-            # Run GraphRAG simple + agent queries
-            logger.info("  Running GraphRAG (simple + agent)...")
+            # Run GraphRAG query
+            logger.info("  Running GraphRAG...")
             graph_result = self.run_graph_rag_query(question)
+
+            # Run Agent RAG query
+            logger.info("  Running Agent RAG...")
+            agent_result = self.run_agent_rag_query(question)
 
             # Run Naive RAG query
             logger.info("  Running Naive RAG...")
             naive_result = self.run_naive_rag_query(question)
 
-            # Evaluate answers for simple GraphRAG, Agent RAG and Naive RAG
+            # Evaluate answers for GraphRAG, Agent RAG and Naive RAG
             graph_evaluation = self.evaluate_answer_quality(
-                ground_truth_answer, graph_result.get("answer_simple", ""), category
+                ground_truth_answer, graph_result.get("answer", ""), category
             )
             agent_evaluation = self.evaluate_answer_quality(
-                ground_truth_answer, graph_result.get("answer_agent", ""), category
+                ground_truth_answer, agent_result.get("answer", ""), category
             )
             naive_evaluation = self.evaluate_answer_quality(
                 ground_truth_answer, naive_result.get("answer", ""), category
@@ -339,17 +377,17 @@ class SystemComparator:
                 "ground_truth": ground_truth_answer,
 
                 "graphrag": {
-                        "answer": graph_result.get("answer_simple", ""),
+                        "answer": graph_result.get("answer", ""),
                         "cypher_query": graph_result.get("cypher_query", ""),
-                        "execution_time": graph_result.get("simple_time", graph_result.get("execution_time", 0)),
-                        "success": graph_result.get("success_simple", False),
+                        "execution_time": graph_result.get("execution_time", 0),
+                    "success": graph_result.get("success", False),
                         "evaluation": graph_evaluation
                 },
 
                     "agent_rag": {
-                        "answer": graph_result.get("answer_agent", ""),
-                        "execution_time": graph_result.get("agent_time", 0),
-                        "success": graph_result.get("success_agent", False),
+                        "answer": agent_result.get("answer", ""),
+                        "execution_time": agent_result.get("execution_time", 0),
+                        "success": agent_result.get("success", False),
                         "evaluation": agent_evaluation,
                         "system": "agent_rag"
                     },
@@ -374,7 +412,7 @@ class SystemComparator:
                 "comparison_date": datetime.now().isoformat(),
                 "total_questions": len(results),
                 "ground_truth_source": "GPT-5",
-                "systems_compared": ["GraphRAG", "Naive RAG"]
+                "systems_compared": ["GraphRAG", "Agent RAG", "Naive RAG"]
             },
             "results": results,
             "summary": self.generate_summary(results)

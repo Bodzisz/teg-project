@@ -32,14 +32,16 @@ from utils.experiment_logging import write_experiment_metadata
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
 class GroundTruthGenerator:
     """Generate ground truth answers using GPT-5 with full CV context."""
 
+
     def __init__(self, max_cvs: int = 30):
         """Initialize the ground truth generator."""
-        # Use GPT-4.1 for performance comparison
+        # Use GPT-5 for ground truth generation
         self.llm = ChatOpenAI(
-            model="gpt-4.1",
+            model="gpt-5-nano",
             max_tokens=4096,
             api_key=os.getenv("OPENAI_API_KEY")
         )
@@ -52,7 +54,7 @@ class GroundTruthGenerator:
         # Limit number of CVs for testing
         self.max_cvs = max_cvs
 
-        logger.info(f"✓ GPT-4.1 Ground Truth Generator initialized (using {max_cvs} CVs)")
+        logger.info(f"✓ GPT-5-nano Ground Truth Generator initialized (using {max_cvs} CVs)")
 
     def load_all_cvs(self) -> List[str]:
         """Load all CV PDFs and extract text content."""
@@ -139,7 +141,7 @@ Answer (concise, direct):"""
             )
 
             # Generate answer with GPT-5
-            logger.info(f"Calling API for: {question[:60]}...")
+            logger.info(f"Calling GPT-5-nano API for: {question[:60]}...")
             api_start = time.time()
             response = await self.llm.ainvoke(prompt)
             api_time = time.time() - api_start
@@ -154,7 +156,7 @@ Answer (concise, direct):"""
                 "ground_truth_answer": ground_truth_answer,
                 "context_tokens_estimate": int(context_tokens),
                 "num_cvs_used": len(all_cv_texts),
-                "model_used": "gpt-4.1",
+                "model_used": "gpt-5-nano",
                 "status": "success",
                 "generation_time_seconds": total_time,
                 "api_time_seconds": api_time
@@ -169,7 +171,7 @@ Answer (concise, direct):"""
                 "ground_truth_answer": f"ERROR: {str(e)}",
                 "context_tokens_estimate": 0,
                 "num_cvs_used": len(all_cv_texts),
-                "model_used": "gpt-4.1",
+                "model_used": "gpt-5-nano",
                 "status": "error",
                 "error": str(e),
                 "generation_time_seconds": total_time
@@ -230,7 +232,7 @@ Answer (concise, direct):"""
         ground_truth_data = {
             "metadata": {
                 "generated_by": "GroundTruthGenerator",
-                "model": "gpt-4.1",
+                "model": "gpt-5-nano",
                 "num_questions": len(results),
                 "num_cvs": len(all_cv_texts),
                 "cv_source_dir": str(self.data_dir),
@@ -244,7 +246,7 @@ Answer (concise, direct):"""
         write_experiment_metadata(
             run_name="generate_ground_truth",
             metadata={
-                "model": "gpt-4.1",
+                "model": "gpt-5-nano",
                 "max_tokens": 4096,
                 "num_questions": len(results),
                 "num_cvs": len(all_cv_texts),

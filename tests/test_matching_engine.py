@@ -69,7 +69,7 @@ def test_rank_candidates_explainability_and_score_consistency():
                 ]
             return []
 
-    with patch("matching_engine.Neo4jGraph", return_value=MockGraph2()):
+    with patch("src.core.matching.engine.Neo4jGraph", return_value=MockGraph2()):
         # Use real scorer
         from src.core.matching.scoring import CandidateScoringEngine
         engine = MatchingEngine()

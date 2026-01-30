@@ -12,7 +12,7 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Callable, Dict, List, Tuple
 
 from utils.experiment_logging import collect_prompt_sources, write_experiment_metadata
 
@@ -90,7 +90,12 @@ def ensure_ragas_imports():
         ) from e
 
 
-def build_samples(questions: List[Dict[str, Any]], runner, system_name: str, SingleTurnSample):
+def build_samples(
+    questions: List[Dict[str, Any]],
+    runner: Callable[[str], Dict[str, Any]],
+    system_name: str,
+    SingleTurnSample,
+) -> Tuple[List[Dict[str, Any]], List[Any]]:
     jsonl_rows = []
     ragas_samples = []
     for i, item in enumerate(questions):
@@ -177,28 +182,31 @@ def evaluate_with_ragas(ragas_samples, out_path: Path):
         embeddings=embeddings_wrapper
     )
 
-    # Convert the result to a JSON-serializable structure if needed (e.g., RAGAS Result -> pandas DataFrame -> dict)
-    serializable_result = result
+    # Save raw results (DataFrame) to a separate file
     if hasattr(result, "to_pandas"):
         df = result.to_pandas()
-        try:
-            serializable_result = df.to_dict(orient="records")
-        except TypeError:
-            # Fallback to default orientation if orient="records" is not supported
-            serializable_result = df.to_dict()
+        raw_path = out_path.with_name(out_path.stem + "_raw.json")
+        df.to_json(raw_path, orient="records", force_ascii=False, indent=2)
 
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    with out_path.open("w", encoding="utf-8") as f:
-        json.dump(serializable_result, f, indent=2, ensure_ascii=False)
+        # Also save the summary (mean metrics) to the main out_path
+        summary = summarize_result(result)
+        with out_path.open("w", encoding="utf-8") as f:
+            json.dump(summary, f, indent=2, ensure_ascii=False)
+    else:
+        # Fallback: just save the result as is
+        with out_path.open("w", encoding="utf-8") as f:
+            json.dump(result, f, indent=2, ensure_ascii=False)
 
     return result
 
 
 def summarize_result(result) -> Dict[str, float]:
+    import pandas as pd
     if hasattr(result, "to_pandas"):
         df = result.to_pandas()
-        metric_cols = [c for c in df.columns if c not in {"question", "answer", "contexts", "ground_truth"}]
-        return {col: float(df[col].mean()) for col in metric_cols if col in df}
+        # Only summarize numeric columns
+        numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
+        return {col: float(df[col].mean()) for col in numeric_cols if col in df}
     if isinstance(result, dict):
         return {k: float(v) for k, v in result.items() if isinstance(v, (int, float))}
     return {}
@@ -221,6 +229,28 @@ def write_comparison_table(summaries: Dict[str, Dict[str, float]], out_path: Pat
     out_path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def write_summaries_and_comparison(all_results: Dict[str, Any], out_dir: Path) -> None:
+    import pandas as pd
+    summaries: Dict[str, Dict[str, float]] = {}
+    for system, result in all_results.items():
+        if hasattr(result, "to_pandas"):
+            df = result.to_pandas()
+            numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
+            summaries[system] = {col: float(df[col].mean()) for col in numeric_cols if col in df}
+        elif isinstance(result, dict):
+            summaries[system] = {k: float(v) for k, v in result.items() if isinstance(v, (int, float))}
+        else:
+            summaries[system] = {}
+
+    comparison_table = out_dir / "comparison_table.md"
+    write_comparison_table(summaries, comparison_table)
+    print(f"✓ RAGAS comparison table: {comparison_table}")
+
+
+def parse_systems(raw: str) -> List[str]:
+    return [s.strip().lower() for s in raw.split(",") if s.strip()]
+
+
 def main():
     parser = argparse.ArgumentParser(description="Run RAGAS evaluation for RAG systems")
     parser.add_argument("--systems", default="graph,agent,naive", help="Comma-separated: graph,agent,naive")
@@ -233,11 +263,10 @@ def main():
     if args.limit and args.limit > 0:
         questions = questions[:args.limit]
 
-    systems = [s.strip().lower() for s in args.systems.split(",") if s.strip()]
+    systems = parse_systems(args.systems)
     out_dir = Path(args.out)
 
-    imports = ensure_ragas_imports()
-    SingleTurnSample = imports["SingleTurnSample"]
+    SingleTurnSample = ensure_ragas_imports()["SingleTurnSample"]
 
     graph_rag = init_graphrag() if "graph" in systems or "agent" in systems else None
     naive_rag = init_naiverag(querier=True) if "naive" in systems or "agent" in systems else None
@@ -261,7 +290,7 @@ def main():
             "limit": args.limit,
             "models": {
                 "openai_model": os.getenv("OPENAI_MODEL"),
-                "openai_eval_model": os.getenv("OPENAI_EVAL_MODEL", "gpt-4o-mini"),
+                "openai_eval_model": os.getenv("OPENAI_EVAL_MODEL", "gpt-4.1"),
                 "openai_embeddings_model": os.getenv("OPENAI_EMBEDDINGS_MODEL", "text-embedding-3-small"),
             },
             "metrics": [
@@ -275,8 +304,7 @@ def main():
             "prompts": prompt_sources,
         }
     )
-
-    summaries = {}
+    all_results = {}
 
     for system in systems:
         if system == "graph":
@@ -299,14 +327,12 @@ def main():
 
         write_jsonl(predictions_file, jsonl_rows)
         result = evaluate_with_ragas(ragas_samples, scores_file)
-        summaries[system] = summarize_result(result)
+        all_results[system] = result
 
         print(f"✓ {system} predictions: {predictions_file}")
         print(f"✓ {system} RAGAS scores: {scores_file}")
 
-    comparison_table = out_dir / "comparison_table.md"
-    write_comparison_table(summaries, comparison_table)
-    print(f"✓ RAGAS comparison table: {comparison_table}")
+    write_summaries_and_comparison(all_results, out_dir)
 
 
 if __name__ == "__main__":

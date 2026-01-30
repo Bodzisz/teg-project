@@ -41,8 +41,8 @@ class FakeScorer:
 
 
 def test_rank_candidates_orders_by_score_and_returns_rfp_id():
-        with patch("src.core.matching.engine.Neo4jGraph", return_value=MockGraph()), \
-            patch("src.core.matching.engine.CandidateScoringEngine", FakeScorer):
+    with patch("src.core.matching.engine.Neo4jGraph", return_value=MockGraph()), \
+         patch("src.core.matching.engine.CandidateScoringEngine", FakeScorer):
         engine = MatchingEngine()
         out = engine.rank_candidates("rfp-1", top_n=2)
 
@@ -69,7 +69,7 @@ def test_rank_candidates_explainability_and_score_consistency():
                 ]
             return []
 
-    with patch("matching_engine.Neo4jGraph", return_value=MockGraph2()):
+    with patch("src.core.matching.engine.Neo4jGraph", return_value=MockGraph2()):
         # Use real scorer
         from src.core.matching.scoring import CandidateScoringEngine
         engine = MatchingEngine()

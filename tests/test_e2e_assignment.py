@@ -1,4 +1,9 @@
+
+from dotenv import load_dotenv
+load_dotenv()
 from unittest.mock import patch
+
+from src.data.parsers.assignment_loader import AssignmentLoader
 
 
 class MockNeo4j:
@@ -96,9 +101,33 @@ class MockNeo4j:
         return []
 
 
+class FakeRFPParser:
+    def __init__(self, graph):
+        self.graph = graph
+
+    def create_project_from_rfp(self, rfp_id: str):
+        project_id = f"PRJ-{rfp_id}"
+        name = f"Project {rfp_id}"
+        # Persist a minimal project record in the mocked graph
+        self.graph.query(
+            "CREATE (p:Project)",
+            {"project_id": project_id, "name": name, "rfp_id": rfp_id}
+        )
+        return {"id": project_id, "name": name, "start_date": None, "end_date": None}
+
+
+class FakeGraphPipeline:
+    def __init__(self, config_path: str = "config/config.toml", clear_graph: bool = False):
+        self.assignment_loader = AssignmentLoader(config_path=config_path)
+        self.rfp_parser = FakeRFPParser(self.assignment_loader.graph)
+        self.cv_builder = type("_CVBuilder", (), {"graph": self.assignment_loader.graph})()
+
+
 def test_end_to_end_assign_flow():
     # Patch Neo4jGraph to use MockNeo4j for all components
-    with patch("langchain_neo4j.Neo4jGraph", return_value=MockNeo4j()):
+    with patch("langchain_neo4j.Neo4jGraph", return_value=MockNeo4j()), \
+         patch("src.data.parsers.assignment_loader.Neo4jGraph", return_value=MockNeo4j()), \
+         patch("src.core.services.pipeline.GraphPipeline", FakeGraphPipeline):
         # Import here to ensure patched class is used in constructors
         from src.core.services.pipeline import PipelineService
 

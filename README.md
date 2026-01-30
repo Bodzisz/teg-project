@@ -26,7 +26,7 @@ Open the local URL printed by Streamlit (typically http://localhost:8501).
 - **Pipeline loader**: The ingestion and pipeline logic lives under the `src` package. To run the pipeline module directly (loads/parses data and writes to the graph), run:
 
 ```bash
-uv run python -m src.services.pipeline --config utils/config.toml
+uv run python -m src.services.pipeline --config config/config.toml
 ```
 
 Adjust the command if you prefer calling a different runner (for example, a
@@ -52,7 +52,7 @@ docker-compose down
 ```
 
 Neo4j Browser is usually available at http://localhost:7474 (or the Bolt
-endpoint at 7687). Update connection settings in `utils/config.toml` if needed.
+endpoint at 7687). Update connection settings in `config/config.toml` if needed.
 
 - **Development environment**: This project uses `uv` to create and manage an
   isolated environment from `pyproject.toml`. Install and sync dependencies:

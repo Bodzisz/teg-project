@@ -158,7 +158,7 @@ class CVGraphAgent:
                         "asked": step,
                         "type": "vector",
                         "answer": answer,
-                        "context": contexts or context_info
+                        "context": contexts if contexts else context_info if context_info else []
                     }
                 else:
                     # Execute Graph Search via System
